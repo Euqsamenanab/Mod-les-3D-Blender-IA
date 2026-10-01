@@ -161,9 +161,12 @@ def arbre_insertion():
     poche_def = nb.set_position(poche_s, nb.vmath("ADD", C, nb.vmath("SCALE", d, scale=rho_n)))
 
     # ------------------------------------------------------------ jouet : compression radiale
-    V, _, Cj, rho_j, dj = radial()
+    V, Vy, Cj, rho_j, dj = radial()
     hit, dans_latex, rc = canal_au_repos(poche_s, Cj, dj)
-    contact = nb.mul(nb.mul(hit, nb.gt(rho_j, rc)), nb.sub(1.0, dans_latex))
+    # seule la partie entrée dans le canal est comprimée ; devant la fente (base contre
+    # les lèvres), ce sont les lèvres qui s'écartent
+    dans_canal = nb.gt(Vy, 0.004)
+    contact = nb.mul(nb.mul(nb.mul(hit, nb.gt(rho_j, rc)), nb.sub(1.0, dans_latex)), dans_canal)
     rf = nb.add(rc, nb.mul(a_rad, nb.sub(rho_j, rc)))
     cible = nb.vmath("ADD", Cj, nb.vmath("SCALE", dj, scale=rf))
     pos_jouet = nb.vmath("ADD", V, nb.vmath("SCALE", nb.vmath("SUBTRACT", cible, V), scale=contact))

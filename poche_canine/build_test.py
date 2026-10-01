@@ -177,7 +177,7 @@ def main():
     coupe.hide_render, key.hide_render = True, False
     ctl.inputs["Transparence"].default_value = 0.9
     if want("26"):
-        reglages(test, Jouet=jouets["noue"], Insertion=fond + 0.015)
+        reglages(test, Jouet=jouets["noue"], Insertion=fond + 0.0075)
         scene.cycles.samples = 24 if QUICK else 160
         cam = studio.camera("Cam_34_Test", (-0.30, -0.42, 0.26), (0.0, 0.04, 0.05), 50)
         studio.render(scene, out("26_insertion_transparente.png"), cam)
