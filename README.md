@@ -120,8 +120,11 @@ Le même matériau sert aux jouets (chacun a son propre matériau, donc ses prop
 | --- | --- | --- | --- |
 | `Poche_Oeuf_Bulbe` | Œuf, 12,4 x 13,6 x 23,5 cm | Vulve en bulbe à 3 lobes, sombre | 18 |
 | `Poche_Sablier_Coeur` | Sablier, 11,6 x 13,6 x 24 cm | Vulve en cœur charnu, Y entrouvert | 20 |
-| `Poche_Fessier_Double` | Mini fessier, 17,6 x 17,6 x 20 cm | Petite fente + anus, deux canaux | 33 |
+| `Poche_Sablier_Traversante` | Sablier symétrique, 11,6 x 13,6 x 24 cm | Petite fente devant, anus derrière, un seul canal | 27 |
 | `Poche_Sablier_Anus` | Sablier | Anus seul | 13 |
+
+Fichiers de textures (4K) : `variantes/textures/<Variante>_*_4k.png` et
+`variantes/<Variante>_textures.blend`, comme pour le modèle d'origine.
 
 Toutes les variantes gardent les principes du modèle d'origine : 100 % quads, maillage
 fermé, topologie fixe pour les shape keys, UV, masques, matériau latex réglable.
@@ -130,9 +133,11 @@ fermé, topologie fixe pour les shape keys, UV, masques, matériau latex réglab
 
 - **Œuf :** face avant en dôme, la plus large près de l'avant, arrière effilé et long.
 - **Sablier :** taille resserrée à 83 % vers le milieu pour la prise en main, bouts renflés.
-- **Mini fessier :** deux fesses rondes séparées par un sillon arrondi.
-  - La face s'aplanit sous l'anus pour qu'il ne soit pas plié par le sillon.
-  - La vulve est en bas, entre le bas des fesses, et l'anus au-dessus, dans le sillon.
+- **Sablier traversant :** même sablier, avec la taille centrée pour que les deux bouts
+  soient identiques. Une face à chaque bout.
+- **Mini fessier (non livré) :** deux fesses rondes et un sillon, avec la vulve et l'anus
+  sur la même face. Écarté pour cette série, il reste disponible dans le générateur
+  (`anus="double"`) comme base possible de la version torse.
 
 ### Styles de lèvres (`LEVRES`)
 
@@ -140,7 +145,11 @@ fermé, topologie fixe pour les shape keys, UV, masques, matériau latex réglab
   jusqu'au bord et découpent trois coussinets. La teinte est sombre par défaut.
 - **Cœur charnu :** contour en cœur, avec un creux en haut et une pointe en bas, et des
   lèvres épaisses.
-  - Le Y est entrouvert à la jonction et laisse voir l'intérieur rose.
+  - Le Y est entrouvert à la jonction par un petit trou rond qui laisse voir l'intérieur
+    rose.
+  - Chaque point du bord est poussé à l'écart de la jonction le long de son rayon, par
+    une fonction croissante. Les points gardent leur ordre, donc le contour ne se
+    croise jamais et le coussinet du haut ne se replie pas.
   - Shape keys `Fente_Ouverte` et `Fente_Fermee`.
 - **Petite fente :** vulve ovale plus petite et plus plate, fente entrouverte en
   lentille, petits plis à la pointe basse. Shape keys `Fente_Ouverte` et `Fente_Fermee`.
@@ -161,21 +170,21 @@ Elles sont relatives au style : `Levres_Gonflees` multiplie la hauteur des lèvr
   - `Anus_Ouvert` : ouverture entrouverte ;
   - `Anus_Anneau_Serre` et `Anus_Anneau_Large` : anneau d'entrée ;
   - `Anus_Chambre_Large` et `Anus_Chambre_Fine` : chambre du nœud ;
-  - `Anus_Canal_*` : mêmes 6 variantes de canal que le vagin.
+  - `Anus_Canal_*` : mêmes 6 variantes de canal que le vagin (anus seul).
 - **Canal anal :** plus étroit que le vagin, avec un anneau d'entrée serré et une
-  chambre qui retient aussi un nœud.
-  - Anus seul : 15,7 cm.
-  - Double entrée : 14,3 cm.
+  chambre qui retient aussi un nœud. Il fait 15,7 cm sur la poche à anus seul.
 
-### Double entrée (mini fessier)
+### Poche traversante
 
-- **Construction :** trois maillages en anneaux, fusionnés sans triangle : la région de
-  la vulve, celle de l'anus et le corps.
-- **Bords communs :** les deux régions partagent un bord horizontal entre les deux
-  entrées. Ces bords sont fixés par la forme de base, donc toutes les shape keys restent
-  compatibles.
-- **Canaux :** deux canaux parallèles et séparés. Celui du vagin fait 18,9 cm, celui de
-  l'anus 14,3 cm, avec son axe 7,2 cm au-dessus de celui du vagin.
+- **Principe :** la vulve est devant et l'anus derrière, dans le même axe, reliés par un
+  seul canal de 24 cm d'une entrée à l'autre. Chacune peut servir d'entrée ou de sortie.
+- **Canal :** il a, de chaque côté, l'anneau d'entrée et la chambre du nœud de son entrée.
+  - Côté vulve : `Anneau_*` et `Chambre_*`.
+  - Côté anus : `Anus_Anneau_*` et `Anus_Chambre_*`.
+  - `Canal_*` règle le relief sur toute la longueur.
+- **Maillage :** une seule chaîne d'anneaux refermée sur elle-même, en tore, sans cap.
+  Elle part de la fente, passe par les lèvres, la face avant, les flancs, la face
+  arrière, l'anus et le canal, puis revient à la fente.
 
 ### Créer une autre combinaison
 
@@ -183,7 +192,7 @@ Elles sont relatives au style : `Levres_Gonflees` multiplie la hauteur des lèvr
 et les shape keys de n'importe quelle combinaison :
 - `forme` : `cylindre`, `oeuf`, `sablier` ou `fessier` ;
 - `levres` : `classique`, `bulbe`, `coeur` ou `fente` ;
-- `anus` : `None`, `"seul"` ou `"double"`.
+- `anus` : `None`, `"seul"`, `"traversant"` ou `"double"` (même face, deux canaux).
 
 Pour l'ajouter aux fichiers générés, il suffit d'ajouter une entrée à `VARIANTES` (avec
 les couleurs de son matériau). Le mini fessier n'existe qu'en double entrée.
@@ -439,7 +448,7 @@ empaquetage, avec 71 % d'occupation.
 
 ```bash
 ~/.venv-blender/bin/python unity/export_fbx.py                       # tous les FBX
-~/.venv-blender/bin/python unity/export_fbx.py --only=Poche_Fessier_Double
+~/.venv-blender/bin/python unity/export_fbx.py --only=Poche_Sablier_Traversante
 ~/.venv-blender/bin/python unity/export_fbx.py --only=noue --subdiv-jouets=1
 ```
 
@@ -453,7 +462,7 @@ empaquetage, avec 71 % d'occupation.
 | `Jouet_Noue.fbx` | 51 042 (gabarit déjà dense) | `Veines`, `Noeud_Gros`, `Noeud_Petit`, `Gland_Gros`, `Epais`, `Fin`, `Long`, `Court` |
 | `Poche_Oeuf_Bulbe.fbx` | 84 098 (subdivision 1) | 18 |
 | `Poche_Sablier_Coeur.fbx` | 85 634 (subdivision 1) | 20 |
-| `Poche_Fessier_Double.fbx` | 143 958 (subdivision 1) | 33 (vulve, canal, anus, canal anal) |
+| `Poche_Sablier_Traversante.fbx` | 106 752 (subdivision 1) | 27 (vulve, anus, canal) |
 | `Poche_Sablier_Anus.fbx` | 74 114 (subdivision 1) | 13 (anus, canal anal) |
 
 - **Objets figés :** les modificateurs (Geometry Nodes, Subdivision) sont appliqués, et
@@ -468,8 +477,8 @@ empaquetage, avec 71 % d'occupation.
 - **Repère :** mètres, Y en haut, rotation et échelle déjà appliquées.
   - Poche : pivot au centre de l'entrée du canal. La vulve regarde +Z (l'avant de
     l'objet), et le canal s'enfonce vers -Z sur 18,8 cm.
-  - Variantes : même repère. En double entrée, le pivot est à l'entrée du vagin, et
-    l'axe de l'anus est 7,2 cm au-dessus (+Y).
+  - Variantes : même repère. Sur la poche traversante, le pivot est à l'entrée de la
+    vulve et l'anus s'ouvre à l'arrière, dans le même axe, 24 cm plus loin (-Z).
   - Jouets : pivot au centre de la base, pointe vers +Y.
 
 ### Import dans Unity (onglet Model de l'inspecteur)
