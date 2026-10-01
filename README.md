@@ -23,7 +23,7 @@ s'ouvrent dans Blender 4.3.x. Les rendus utilisent Cycles en CPU, sans interface
 | `lib/studio.py` | Scène, lumières, caméras, rendu, contrôle qualité du maillage |
 | `lib/nodes.py` | Construction d'arbres Geometry Nodes depuis Python |
 | `poche_canine/` | Vagin de poche à vulve canine stylisée (anthro/furry) et sa scène de test |
-| `jouets/` | Jouets de test procéduraux en Geometry Nodes |
+| `jouets/` | Jouets de test procéduraux en Geometry Nodes (`build.py` : fichier des jouets seuls) |
 | `deformation/` | Test d'insertion en Geometry Nodes (déformation instantanée) |
 | `output/` | Fichiers `.blend` et rendus générés |
 
@@ -117,10 +117,19 @@ profil de révolution : la topologie ne change jamais, quels que soient les rég
 | --- | --- |
 | `Jouet_Lisse` | Longueur (23,5 cm), Diamètre (4,2 cm), Diamètre pointe, base, lissage |
 | `Jouet_Perles` | Nombre de perles (1 à 8), diamètre de chaque perle, écart après chaque perle (la longueur suit), diamètre de tige, allongement des perles, longueur du manche, base |
-| `Jouet_Noue` | Pointe → centre du nœud (15,5 cm), diamètre et longueur de la pointe effilée, diamètre et renflement de la tige, diamètre (6,2 cm) et longueur du nœud, col, base |
+| `Jouet_Noue` | Pointe → centre du nœud (15,5 cm), petite pointe (diamètre, longueur), gland en obus (diamètre, longueur, bourrelet), tige (diamètre côté gland et côté nœud), sillon de l'urètre (profondeur, largeur), nœud en deux lobes (diamètre des lobes, écart, longueur), col, base |
 
 La perle 1 est à la pointe. Les jouets lisse et à perles dépassent la longueur du
 canal, pour qu'il y ait une butée au fond.
+
+Le jouet noué (canin stylisé) n'est pas de révolution : le profil répartit les
+anneaux le long de l'axe, puis chaque sommet reçoit un rayon selon son angle
+(sillon de l'urètre sur le dessous, côté +Y local ; lobes du nœud de chaque côté,
+±X). Gabarit de 96 sommets par anneau pour garder le sillon net.
+
+```bash
+~/.venv-blender/bin/python jouets/build.py     # output/jouets/jouets.blend + vues du jouet noué
+```
 
 ## Test d'insertion en Geometry Nodes
 

@@ -1,4 +1,4 @@
-"""Jouets de test procéduraux (Geometry Nodes) : lisse, à perles, à nœud stylisé.
+"""Jouets de test procéduraux (Geometry Nodes) : lisse, à perles, à nœud canin stylisé.
 
 Principe : un gabarit de maillage fixe (anneaux + caps en grille, 100 % quads) porte
 deux attributs, `t` (0 = centre de la base, 1 = centre de la pointe) et `theta`
@@ -6,6 +6,11 @@ deux attributs, `t` (0 = centre de la base, 1 = centre de la pointe) et `theta`
 réglages, le transforme en courbe, puis place chaque sommet du gabarit à l'abscisse
 curviligne `t` de cette courbe. La topologie ne change jamais : les réglages se
 font en direct dans le panneau du modificateur, et l'export Unity reste propre.
+
+Formes non symétriques (jouet noué) : le profil de révolution sert seulement à
+répartir les anneaux le long de l'axe ; le rayon final de chaque sommet est
+recalculé selon son angle `theta` (sillon de l'urètre, nœud en deux lobes).
+Le dessous du jouet (côté urètre) est le côté +Y local.
 
 Repère du jouet : axe = Z local, base à z = 0, pointe en haut.
 w = distance depuis la pointe (w = 0 à la pointe, w = L à la base).
@@ -19,27 +24,27 @@ from lib.geom import RingMesh
 from lib.nodes import NodeBuilder, add_socket, new_tree
 from lib.studio import mesh_object
 
-SEGMENTS = 48          # sommets par anneau (multiple de 8)
-ANNEAUX = 240          # anneaux le long du profil
+SEGMENTS = 48          # sommets par anneau par défaut (multiple de 8)
+ANNEAUX = 240          # anneaux le long du profil par défaut
 T_CAP = 0.035          # part du profil couverte par chaque cap
 PROFIL_POINTS = 1500   # échantillons du profil
 
 
 # --------------------------------------------------------------------------- gabarit
-def gabarit():
-    rm = RingMesh(SEGMENTS)
-    th = -math.pi / 2 + 2 * math.pi * np.arange(SEGMENTS) / SEGMENTS
-    for i in range(ANNEAUX):
-        t = T_CAP + (1 - 2 * T_CAP) * i / (ANNEAUX - 1)
-        rm.add_ring(np.column_stack([np.cos(th), np.sin(th), np.full(SEGMENTS, t)]), "anneau", t=t, theta=th)
+def gabarit(segments=SEGMENTS, anneaux=ANNEAUX):
+    rm = RingMesh(segments)
+    th = -math.pi / 2 + 2 * math.pi * np.arange(segments) / segments
+    for i in range(anneaux):
+        t = T_CAP + (1 - 2 * T_CAP) * i / (anneaux - 1)
+        rm.add_ring(np.column_stack([np.cos(th), np.sin(th), np.full(segments, t)]), "anneau", t=t, theta=th)
 
     def theta_of(Q):
         return np.arctan2(Q[:, 1], Q[:, 0])
 
-    q = SEGMENTS // 8
+    q = segments // 8
     rm.cap(0, lambda R: R[:, :2], lambda Q: np.column_stack([Q, np.full(len(Q), T_CAP)]), q,
            t=lambda Q: T_CAP * np.hypot(Q[:, 0], Q[:, 1]), theta=theta_of)
-    rm.cap(ANNEAUX - 1, lambda R: R[:, :2], lambda Q: np.column_stack([Q, np.full(len(Q), 1 - T_CAP)]), q,
+    rm.cap(anneaux - 1, lambda R: R[:, :2], lambda Q: np.column_stack([Q, np.full(len(Q), 1 - T_CAP)]), q,
            t=lambda Q: 1 - T_CAP * np.hypot(Q[:, 0], Q[:, 1]), theta=theta_of)
     return rm.build()
 
@@ -70,7 +75,7 @@ def profil_lisse(nb, g):
         corps = _pointe(nb, w, rp, tige)
         return _finalise(nb, [corps, nb.ellipsoid(w, nb.sub(L, h), rb, h)], g["Lissage"])
 
-    return L, r
+    return L, r, None
 
 
 def profil_perles(nb, g, n_max=8):
@@ -95,29 +100,66 @@ def profil_perles(nb, g, n_max=8):
         termes += [nb.mul(actif, nb.ellipsoid(w, c, ri, demi)) for actif, ri, demi, c in perles]
         return _finalise(nb, termes, g["Lissage"])
 
-    return L, r
+    return L, r, None
 
 
 def profil_noue(nb, g):
-    La, Lp = g["Pointe → centre du nœud"], g["Longueur pointe"]
-    rp, R, rk, rc, rb = (nb.mul(g[n], 0.5) for n in
-                         ("Diamètre pointe", "Diamètre tige", "Diamètre nœud", "Diamètre col", "Diamètre base"))
-    demi_k = nb.mul(g["Longueur nœud"], 0.5)
+    """Jouet noué canin stylisé : petite pointe, gland formé, tige avec sillon d'urètre
+    sur le dessous (+Y), nœud en deux lobes latéraux (±X), col et base."""
+    La = g["Pointe → centre du nœud"]
+    rn, ln = nb.mul(g["Diamètre pointe"], 0.5), g["Longueur pointe"]
+    rg, Lg = nb.mul(g["Diamètre gland"], 0.5), g["Longueur gland"]
+    r1, r2 = nb.mul(g["Diamètre tige (gland)"], 0.5), nb.mul(g["Diamètre tige (nœud)"], 0.5)
+    rl, d = nb.mul(g["Diamètre lobes"], 0.5), nb.mul(g["Écart des lobes"], 0.5)
+    Ll = nb.mul(g["Longueur nœud"], 0.5)
+    rc, rb = nb.mul(g["Diamètre col"], 0.5), nb.mul(g["Diamètre base"], 0.5)
     h = nb.mul(g["Hauteur base"], 0.5)
-    L = nb.add(nb.add(nb.add(La, demi_k), g["Longueur col"]), nb.mul(h, 2.0))
+    L = nb.add(nb.add(nb.add(La, Ll), g["Longueur col"]), nb.mul(h, 2.0))
+    k = g["Lissage"]
 
-    def r(w):
-        x1 = nb.clamp01(nb.div(nb.sub(w, rp), nb.sub(Lp, rp)))
-        ogive = nb.lerp(rp, R, nb.pow(nb.sin(nb.mul(x1, math.pi / 2)), 0.85))
-        x2 = nb.clamp01(nb.div(nb.sub(w, Lp), nb.max(nb.sub(nb.sub(La, demi_k), Lp), 1e-4)))
-        renfle = nb.add(1.0, nb.mul(g["Renflement tige"], nb.sin(nb.mul(x2, math.pi))))
-        tige = nb.mul(nb.mul(ogive, renfle), nb.between(w, 0.0, La))
+    def corps(w):
+        """Gland + tige, de révolution."""
+        # gland en obus : s'élargit presque linéairement depuis la petite pointe, puis s'arrondit
+        x1 = nb.clamp01(nb.div(nb.sub(w, ln), nb.max(nb.sub(nb.mul(Lg, 0.9), ln), 1e-4)))
+        tete = nb.lerp(rn, rg, nb.sub(1.0, nb.pow(nb.sub(1.0, x1), 1.6)))
+        tige = nb.lerp(r1, r2, nb.clamp01(nb.div(nb.sub(w, Lg), nb.max(nb.sub(La, Lg), 1e-4))))
+        f = nb.smoothstep(nb.mul(Lg, 0.85), nb.mul(Lg, 1.15), w)
+        bourrelet = nb.mul(g["Bourrelet gland"], nb.exp(nb.mul(-1.0, nb.pow(nb.div(nb.sub(w, Lg), 0.006), 2.0))))
+        r = nb.mul(nb.add(nb.lerp(tete, tige, f), bourrelet), nb.between(w, 0.0, La))
+        return nb.switch("FLOAT", nb.lt(w, ln), r, nb.ellipsoid(w, ln, rn, ln))   # petite pointe au bout
+
+    def autres(w):
         col = nb.mul(rc, nb.between(w, La, nb.sub(L, h)))
-        termes = [_pointe(nb, w, rp, tige), nb.ellipsoid(w, La, rk, demi_k), col,
-                  nb.ellipsoid(w, nb.sub(L, h), rb, h)]
-        return _finalise(nb, termes, g["Lissage"])
+        return [col, nb.ellipsoid(w, nb.sub(L, h), rb, h)]
 
-    return L, r
+    def enveloppe(w):
+        return _finalise(nb, [corps(w), nb.ellipsoid(w, La, nb.add(d, rl), Ll)] + autres(w), k)
+
+    def rayon_3d(w, th):
+        # sillon de l'urètre sur le dessous (+Y), bordé de deux bourrelets
+        s0 = nb.sin(th)
+        sig2 = nb.mul(g["Largeur urètre"], g["Largeur urètre"])
+        delta = nb.mul(g["Largeur urètre"], 2.2)
+
+        def gauss(c):
+            return nb.exp(nb.div(nb.sub(c, 1.0), sig2))
+
+        bords = nb.add(gauss(nb.sin(nb.sub(th, delta))), gauss(nb.sin(nb.add(th, delta))))
+        prof = g["Profondeur urètre"]
+        mod = nb.add(nb.sub(1.0, nb.mul(prof, gauss(s0))), nb.mul(nb.mul(prof, 0.35), bords))
+        masque = nb.mul(nb.smoothstep(nb.mul(ln, 2.0), nb.mul(Lg, 0.7), w),
+                        nb.sub(1.0, nb.smoothstep(nb.sub(La, nb.mul(Ll, 1.2)), nb.sub(La, nb.mul(Ll, 0.5)), w)))
+        corps3d = nb.mul(corps(w), nb.add(1.0, nb.mul(masque, nb.sub(mod, 1.0))))
+        # nœud : deux lobes ellipsoïdaux centrés en x = ±d ; distance depuis l'axe dans la direction th
+        q = nb.div(nb.sub(w, La), Ll)
+        rho_c = nb.mul(rl, nb.sqrt(nb.max(0.0, nb.sub(1.0, nb.mul(q, q)))))
+        ds = nb.mul(d, s0)
+        disc = nb.sub(nb.mul(rho_c, rho_c), nb.mul(ds, ds))
+        lobes = nb.mul(nb.gt(disc, 0.0),
+                       nb.add(nb.mul(d, nb.math("ABSOLUTE", nb.cos(th))), nb.sqrt(nb.max(disc, 0.0))))
+        return _finalise(nb, [corps3d, lobes] + autres(w), k)
+
+    return L, enveloppe, rayon_3d
 
 
 D, F = "DISTANCE", "FACTOR"
@@ -144,12 +186,19 @@ JOUETS = {
     "noue": dict(
         nom="Jouet_Noue",
         profil=profil_noue,
+        segments=96, anneaux=300,
         entrees=[("Pointe → centre du nœud", "FLOAT", 0.155, 0.04, 0.4, D),
-                 ("Diamètre pointe", "FLOAT", 0.012, 0.003, 0.08, D), ("Longueur pointe", "FLOAT", 0.09, 0.01, 0.2, D),
-                 ("Diamètre tige", "FLOAT", 0.038, 0.005, 0.12, D), ("Renflement tige", "FLOAT", 0.08, -0.3, 0.6, F),
-                 ("Diamètre nœud", "FLOAT", 0.062, 0.01, 0.15, D), ("Longueur nœud", "FLOAT", 0.055, 0.01, 0.15, D),
-                 ("Diamètre col", "FLOAT", 0.036, 0.005, 0.12, D), ("Longueur col", "FLOAT", 0.02, 0.0, 0.15, D),
-                 ("Diamètre base", "FLOAT", 0.07, 0.0, 0.2, D)] + BASE[1:],
+                 ("Diamètre pointe", "FLOAT", 0.006, 0.002, 0.04, D), ("Longueur pointe", "FLOAT", 0.013, 0.002, 0.05, D),
+                 ("Diamètre gland", "FLOAT", 0.040, 0.005, 0.12, D), ("Longueur gland", "FLOAT", 0.060, 0.01, 0.15, D),
+                 ("Bourrelet gland", "FLOAT", 0.0008, 0.0, 0.01, D),
+                 ("Diamètre tige (gland)", "FLOAT", 0.037, 0.005, 0.12, D),
+                 ("Diamètre tige (nœud)", "FLOAT", 0.040, 0.005, 0.12, D),
+                 ("Profondeur urètre", "FLOAT", 0.14, 0.0, 0.4, F), ("Largeur urètre", "FLOAT", 0.16, 0.05, 0.6, None),
+                 ("Diamètre lobes", "FLOAT", 0.050, 0.01, 0.12, D), ("Écart des lobes", "FLOAT", 0.028, 0.0, 0.1, D),
+                 ("Longueur nœud", "FLOAT", 0.050, 0.01, 0.15, D),
+                 ("Diamètre col", "FLOAT", 0.034, 0.005, 0.12, D), ("Longueur col", "FLOAT", 0.018, 0.0, 0.15, D),
+                 ("Diamètre base", "FLOAT", 0.07, 0.0, 0.2, D), ("Hauteur base", "FLOAT", 0.014, 0.002, 0.05, D),
+                 ("Lissage", "FLOAT", 0.005, 0.0, 0.03, D)],
     ),
 }
 
@@ -169,7 +218,7 @@ def arbre_jouet(kind):
     g = {s.name: gi.outputs[s.name] for s in tree.interface.items_tree
          if s.item_type == "SOCKET" and s.in_out == "INPUT" and s.socket_type != "NodeSocketGeometry"}
 
-    L, rayon = spec["profil"](nb, g)
+    L, rayon, rayon_3d = spec["profil"](nb, g)
 
     # profil échantillonné de la base (u = 0) à la pointe (u = 1), plus dense aux extrémités
     line = nb.node("GeometryNodeMeshLine")
@@ -185,6 +234,8 @@ def arbre_jouet(kind):
     nb.set(sample.inputs["Factor"], nb.named("t"))
     r, _, z = nb.xyz(sample.outputs["Position"])
     th = nb.named("theta")
+    if rayon_3d:
+        r = rayon_3d(nb.sub(L, z), th)
     pos = nb.vec(nb.mul(r, nb.cos(th)), nb.mul(r, nb.sin(th)), z)
     nb.set(go.inputs["Geometry"], nb.set_position(gi.outputs["Geometry"], pos))
     return tree
@@ -206,7 +257,8 @@ def regler(ob, modifier="Generateur", **valeurs):
 
 
 def creer_jouet(kind, material, location=(0, 0, 0), subdivision=(1, 2)):
-    verts, faces, attrs = gabarit()
+    spec = JOUETS[kind]
+    verts, faces, attrs = gabarit(spec.get("segments", SEGMENTS), spec.get("anneaux", ANNEAUX))
     ob = mesh_object(JOUETS[kind]["nom"], verts, faces, [material])
     me = ob.data
     for name in ("t", "theta"):
