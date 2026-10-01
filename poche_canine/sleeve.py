@@ -257,23 +257,36 @@ def vulva_outline(P):
 
 
 # --------------------------------------------------------------------------- face avant
+def smax(a, b, k):
+    """Maximum lissé (k = largeur de l'arrondi) : le creux entre deux bosses s'arrondit."""
+    return 0.5 * (a + b + np.sqrt((a - b) ** 2 + k * k)) - 0.5 * k
+
+
 def fesses(F, uv, rho, rho_rim):
-    """Relief des fesses (vers l'avant, m) : deux dômes séparés par un sillon arrondi."""
+    """Relief des fesses (vers l'avant, m) : deux dômes séparés par un sillon arrondi.
+
+    F : réglages d'une paire de dômes, ou liste de paires (cuisses, fesses...) réunies par
+    un maximum lissé ; le relief s'efface vers le bord de la face (`fondu` de la première).
+    """
     u, v = uv[:, 0], uv[:, 1]
+    total = None
+    for G in (F if isinstance(F, (list, tuple)) else [F]):
+        def joue(cu):
+            x = ((u - cu) / G["ru"]) ** 2 + ((v - G["cv"]) / G["rv"]) ** 2
+            r = np.maximum(1.0 - x, 0.0)
+            return G["h"] * r ** G.get("galbe", 0.5) * smoothstep(r / G.get("adoucir", 0.35))
 
-    def joue(cu):
-        x = ((u - cu) / F["ru"]) ** 2 + ((v - F["cv"]) / F["rv"]) ** 2
-        r = np.maximum(1.0 - x, 0.0)
-        return F["h"] * np.sqrt(r) * smoothstep(r / 0.35)
-
-    a, b = joue(F["cu"]), joue(-F["cu"])
-    k = F["k"]
-    bosse = 0.5 * (a + b + np.sqrt((a - b) ** 2 + k * k)) - 0.5 * k      # max lissé : sillon arrondi
-    return np.maximum(bosse, 0.0) * (1.0 - smoothstep((rho - F["fondu"]) / (rho_rim - F["fondu"])))
+        paire = smax(joue(G["cu"]), joue(-G["cu"]), G["k"])         # max lissé : sillon arrondi
+        total = paire if total is None else smax(total, paire, G["k"])
+    F0 = F[0] if isinstance(F, (list, tuple)) else F
+    return np.maximum(total, 0.0) * (1.0 - smoothstep((rho - F0["fondu"]) / (rho_rim - F0["fondu"])))
 
 
 def face_depth(P, uv):
-    rho = np.sqrt((uv[:, 0] / P["A"]) ** 2 + (uv[:, 1] / P["B"]) ** 2)
+    if P.get("rho_fn"):                    # section de la face non elliptique (torse)
+        rho = P["rho_fn"](uv)
+    else:
+        rho = np.sqrt((uv[:, 0] / P["A"]) ** 2 + (uv[:, 1] / P["B"]) ** 2)
     rho = np.clip(rho, 0.0, 0.999999)
     d = P["Df"] * (1 - (1 - rho ** P["m"]) ** (1 / P["m"]))
     if P["fesses"]:
@@ -840,8 +853,11 @@ def build_double(base, P):
     forme de base, donc les shape keys gardent la même topologie.
     """
     Nv = P["N"]
-    P = dict(P, replats=(((0.0, P["anus_centre_v"]), 0.8 * P["anus_R"], P["anus_R"] + 0.013),))
-    cle = tuple(sorted((k, v) for k, v in base.items() if not isinstance(v, (dict, list))))
+    replats = (((0.0, P["anus_centre_v"]), 0.8 * P["anus_R"], P["anus_R"] + 0.013),)
+    if P.get("replat_vulve"):              # (r1, r2) : face aussi aplanie sous la vulve (torse)
+        replats += (((0.0, P["vulve_v"]),) + tuple(P["replat_vulve"]),)
+    P = dict(P, replats=replats)
+    cle = tuple(sorted((k, v) for k, v in base.items() if not isinstance(v, (dict, list)) and not callable(v)))
     BV, k_J, BA, ang_a, Na = _topologie_double(cle)
     c = Nv - 2 * k_J
     h = c // 2
@@ -869,13 +885,20 @@ def build_double(base, P):
     rc = RingMesh(Nc)
     rc.add_ring(C, "face", vulve=0.0, interieur=0.0)
     centre_c = np.array([0.0, 0.5 * (C[:, 1].min() + C[:, 1].max())])
-    rim_dense = ellipse(P["rho_rim"] * A, P["rho_rim"] * B, 4000)
+    # bord de la face : ellipse (A, B), ou section fournie (polyligne dense, rho = 1)
+    rim_dense = P["rho_rim"] * (P["section_dense"]() if P.get("section_dense") else ellipse(A, B, 4000))
     rim = rayon_vers(centre_c, np.arctan2(C[:, 1] - centre_c[1], C[:, 0]), rim_dense)
     for s in P["face_s"]:
         uv = C[:, :2] + s * (rim - C[:, :2])
         rc.add_ring(np.column_stack([uv, face_depth(P, uv)]), "face", vulve=0.0, interieur=0.0)
     ring_bord = len(rc.rings) - 1
-    corps, cap_dos = anneaux_corps(P, rim / P["rho_rim"], transition=ellipse(A, B, Nc))
+    # corps au-dessus de la face : fourni (torse) ou manchon (arrondi, flancs, arrière)
+    if P.get("corps_double"):
+        corps, cap_dos, info_corps = P["corps_double"](P, rim / P["rho_rim"], Nc)
+    else:
+        corps, cap_dos = anneaux_corps(P, rim / P["rho_rim"], transition=ellipse(A, B, Nc))
+        info_corps = dict(boucles=(), ligne=0, zones=())
+    debut_corps = len(rc.rings)
     for pts, tag in corps:
         rc.add_ring(pts, tag)
     ring_dos = len(rc.rings) - 1
@@ -899,15 +922,21 @@ def build_double(base, P):
         else:
             liens.append((2, i, 0, bv + Nv - k_J + (i - (k_J + Na - c))))
     verts, faces, attrs, idx, f_off = fusionner(parties, liens)
-    world = np.column_stack([verts[:, 0], verts[:, 2], verts[:, 1] + B])
+    world = P["monde"](verts) if P.get("monde") else np.column_stack([verts[:, 0], verts[:, 2], verts[:, 1] + B])
 
     # ---- coutures et zones (indices globaux)
     coutures = []
+    boucles_corps = (ring_bord, ring_dos) + tuple(debut_corps + b for b in info_corps["boucles"])
+    k_ligne = info_corps["ligne"]          # ligne de couture verticale du corps (0 = bas de la vulve)
     for p, (N_, rings, ligne) in enumerate([
             (Nv, (0, r_v["coupe"], r_v["ouverture"], r_v["bord"], r_v["couronne"]), (0, r_v["couronne"])),
             (Na, (0, r_a["coupe"], r_a["ouverture"], r_a["bord"], r_a["couronne"]), (0, r_a["couronne"])),
-            (Nc, (ring_bord, ring_dos), (0, ring_dos))]):
-        coutures += [(int(idx[p][a]), int(idx[p][b])) for a, b in _boucles(N_, rings, ligne)]
+            (Nc, boucles_corps, None)]):
+        if ligne is None:
+            liste = _boucles(N_, rings, (0, 0)) + [(r * N_ + k_ligne, (r + 1) * N_ + k_ligne) for r in range(ring_dos)]
+        else:
+            liste = _boucles(N_, rings, ligne)
+        coutures += [(int(idx[p][a]), int(idx[p][b])) for a, b in liste]
     coutures = sorted({tuple(sorted(e)) for e in coutures if e[0] != e[1]})
 
     zones = {}
@@ -923,7 +952,11 @@ def build_double(base, P):
         ajouter("face" if p == 0 else "face_anus", p, range(r_["bord"] * N_, (R_ - 1) * N_))
         ajouter("canal" + suffixe, p, range((R_ - 1) * N_, len(parties[p][1])))
     ajouter("face_fesses", 2, range(0, ring_bord * Nc))
-    ajouter("corps", 2, range(ring_bord * Nc, len(parties[2][1])))
+    r0 = ring_bord
+    for zone, fin in info_corps["zones"]:  # zones du corps fourni (torse, épaules, cou...)
+        ajouter(zone, 2, range(r0 * Nc, (debut_corps + fin) * Nc))
+        r0 = debut_corps + fin
+    ajouter("corps", 2, range(r0 * Nc, len(parties[2][1])))
 
     infos = dict(axe_canal_z=float(ent_v["axe"][1] + B), axe_anus_z=float(ent_a["axe"][1] + B),
                  profondeur_canal=ic_v["profondeur"], profondeur_anus=ic_a["profondeur"],

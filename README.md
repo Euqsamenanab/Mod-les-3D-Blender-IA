@@ -27,6 +27,7 @@ s'ouvrent dans Blender 4.3.x. Les rendus utilisent Cycles en CPU, sans interface
 | `deformation/` | Test d'insertion en Geometry Nodes (déformation instantanée) |
 | `lib/uv.py`, `lib/bake.py` | Coutures et dépliage UV, cuisson de textures (Cycles) |
 | `unity/` | Export FBX pour Unity 6 URP |
+| `poche_canine/torse.py`, `queue.py` | Onahole torse et sa queue (`build_torse.py`) |
 | `output/` | Fichiers `.blend` et rendus générés |
 
 ## Vagin de poche (`poche_canine/`)
@@ -200,6 +201,60 @@ les couleurs de son matériau). Le mini fessier n'existe qu'en double entrée.
 ### Aperçus (`output/poche_canine/50_variantes.png`)
 
 Quatre vues rapides par variante (face, trois-quarts, profil, coupe), en latex opaque.
+
+## Onahole torse (`poche_canine/torse.py`, `output/torse/`)
+
+```bash
+~/.venv-blender/bin/python poche_canine/build_torse.py              # onahole_torse.blend + planche 60
+~/.venv-blender/bin/python poche_canine/build_torse.py --no-render
+~/.venv-blender/bin/python unity/export_fbx.py --only=torse          # output/unity/Onahole_Torse.fbx
+```
+
+- **Objets :** un torse féminin anthro grandeur nature (environ 74 cm, du bas des cuisses au haut du cou), sans
+  bras, jambes ni tête. Les moignons de cou, de bras et de cuisses sont arrondis.
+- **Entrejambe :** la vulve (bulbe à 3 lobes par défaut) est devant, entre les cuisses,
+  et l'anus derrière, entre les fesses. Les deux canaux sont séparés : 19 cm pour le vagin,
+  16 cm pour l'anus.
+- **Maillage :** 61 955 sommets, uniquement des quads, fermé, avec 53 shape keys.
+- **Queue :** objet `Queue`, enfant du torse.
+  - Forme de base : moignon.
+  - Shape keys `Queue_Chat` (fine et longue, relevée) et `Queue_Loup` (touffue, avec des
+    mèches).
+- **Échelle :** propriété `Echelle` du torse (Propriétés de l'objet > Propriétés
+  personnalisées), de 1 (grandeur nature) à 0,3.
+  - Vers 0,4, c'est un petit jouet de poche : l'entrée et les canaux rétrécissent aussi,
+    donc ils sont plus serrés.
+  - Dans Unity, régler l'échelle du transform.
+- **Matériau :** le latex réglable, avec en plus `Couleur Areoles` et `Teinte Areoles`
+  (canal B des `Masques`).
+
+### Shape keys du torse
+
+| Groupe | Shape keys |
+| --- | --- |
+| Styles de vulve | `Style_Classique`, `Style_Coeur`, `Style_Fente` (le bulbe est la forme de base) |
+| Vulve | `Vulve_Grande` / `Petite`, `Levres_Gonflees` / `Fines`, `Fente_Branches_Longues` / `Courtes`, `Pointe_Allongee` / `Arrondie` |
+| Canal du vagin | `Anneau_Serre` / `Large`, `Chambre_Large` / `Fine`, `Canal_*` (6 variantes) |
+| Anus | `Anus_Plisse`, `Anus_Gonfle`, `Anus_Ouvert`, `Anus_Anneau_*`, `Anus_Chambre_*`, `Anus_Canal_*` |
+| Seins | `Seins_Gros` / `Petits`, `Seins_Hauts` / `Bas`, `Tetons_Gros` / `Petits` |
+| Fesses, hanches, taille | `Fesses_Grosses` / `Petites`, `Fesses_Rebondies`, `Hanches_Larges` / `Etroites`, `Taille_Fine` / `Large` |
+| Ventre, muscles | `Ventre_Rond` / `Plat`, `Muscles_Marques` / `Doux`, `Epaules_Larges`, `Cuisses_Grosses` |
+
+### Construction
+
+- **Entrejambe :** vue de dessous, c'est une « face » assemblée comme la double entrée du
+  mini fessier. Elle contient les régions de la vulve et de l'anus, puis l'anneau commun
+  jusqu'au bord du bassin.
+  - Les cuisses et le bas des fesses y sont en relief.
+  - La face s'aplanit sous chaque entrée.
+- **Torse :** des anneaux horizontaux du bassin au cou. Chaque section a un rayon polaire
+  R(phi, z) : une superellipse, plus des bosses (seins, tétons, fesses, ventre, moignons
+  de bras, omoplates) et des sillons (colonne, ligne blanche, abdominaux, nombril, plis de
+  l'aine, clavicules).
+- **Raccord :** au bas du torse, la section arrive à la verticale, comme l'arrondi de
+  l'entrejambe. Il n'y a donc pas de pli à la jonction.
+- **Topologie fixe :** les réglages du corps ne changent jamais la topologie. Ce sont des
+  shape keys, comme ceux de la vulve et de l'anus.
 
 ## Jouets de test (`jouets/`)
 
@@ -529,4 +584,4 @@ empaquetage, avec 71 % d'occupation.
 - Shader URP sur mesure : couleur, transparence, reflet, teintes de la vulve et de
   l'intérieur réglables à part (avec les `Masques`).
 - Déformation à l'insertion dans Unity.
-- Version torse (onahole) de la poche.
+- Torse : textures cuites (4K), retouches selon les retours.

@@ -82,7 +82,9 @@ def materiaux_cuisson(reglages):
         nt.links.new(attribut(nt, "Masques", "Color"), sep.inputs["Color"])
         fv = math_(nt, "MULTIPLY", sep.outputs["Red"], reglages["Teinte Vulve"], clamp=True)
         fi = math_(nt, "MULTIPLY", sep.outputs["Green"], reglages["Teinte Interieur"], clamp=True)
-        c1 = mix_couleur(nt, fv, reglages["Couleur"], reglages["Couleur Vulve"])
+        fa = math_(nt, "MULTIPLY", sep.outputs["Blue"], reglages["Teinte Areoles"], clamp=True)
+        c0 = mix_couleur(nt, fa, reglages["Couleur"], reglages["Couleur Areoles"])
+        c1 = mix_couleur(nt, fv, c0, reglages["Couleur Vulve"])
         return mix_couleur(nt, fi, c1, reglages["Couleur Interieur"])
 
     def masques(nt):
@@ -91,6 +93,7 @@ def materiaux_cuisson(reglages):
         comb = nt.nodes.new("ShaderNodeCombineColor")
         nt.links.new(sep.outputs["Red"], comb.inputs["Red"])
         nt.links.new(sep.outputs["Green"], comb.inputs["Green"])
+        nt.links.new(sep.outputs["Blue"], comb.inputs["Blue"])
         return comb.outputs["Color"]
 
     return materiau_emission("Cuisson_Couleur", couleur), materiau_emission("Cuisson_Masques", masques), relief()

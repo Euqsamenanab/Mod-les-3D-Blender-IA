@@ -1,9 +1,11 @@
 """Export FBX pour Unity 6 (URP) : output/unity/*.fbx.
 
-Usage : python unity/export_fbx.py [--subdiv-poche=1] [--subdiv-jouets=N] [--only=poche,lisse,perles,noue,...]
+Usage : python unity/export_fbx.py [--subdiv-poche=1] [--subdiv-jouets=N] [--subdiv-torse=1]
+                                   [--only=poche,lisse,perles,noue,torse,...]
 
 `--only` accepte aussi les variantes de la poche (Poche_Oeuf_Bulbe, Poche_Sablier_Coeur,
-Poche_Fessier_Double, Poche_Sablier_Anus) ; par défaut, tout est exporté.
+Poche_Sablier_Traversante, Poche_Sablier_Anus) et `torse` (Onahole_Torse.fbx : torse +
+queue) ; par défaut, tout est exporté.
 
 Subdivision par défaut : poche 1, jouets lisse et à perles 1, jouet noué 0 (son gabarit
 est déjà dense : 160 x 300). `--subdiv-jouets` impose le même niveau à tous les jouets.
@@ -19,6 +21,8 @@ Repère Unity : Y en haut, mètres, échelle 1, rotation 0 (transformations appl
   le canal s'enfonce vers -Z. Double entrée : pivot à l'entrée du vagin, anus au-dessus.
 - Jouets : pivot au centre de la base ; la pointe vers +Y ; le dessous (urètre du
   jouet noué) vers -Z.
+- Torse : debout, pivot au sol sous les moignons de cuisses ; le ventre regarde +Z.
+  Grandeur nature : pour le petit jouet de poche, réduire l'échelle du transform.
 """
 import os
 import sys
@@ -47,7 +51,8 @@ SUBDIV_POCHE = int(option("subdiv-poche", "1"))
 SUBDIV_JOUETS = {"lisse": 1, "perles": 1, "noue": 0}
 if option("subdiv-jouets", None) is not None:
     SUBDIV_JOUETS = dict.fromkeys(SUBDIV_JOUETS, int(option("subdiv-jouets", None)))
-SEULEMENT = option("only", ",".join(["poche", "lisse", "perles", "noue", *VARIANTES])).split(",")
+SUBDIV_TORSE = int(option("subdiv-torse", "1"))
+SEULEMENT = option("only", ",".join(["poche", "lisse", "perles", "noue", *VARIANTES, "torse"])).split(",")
 
 
 def _fois(f, *noms):
@@ -129,10 +134,11 @@ def figer(ob, nom, variantes, decalage=(0.0, 0.0, 0.0)):
     return fige
 
 
-def exporter(ob, chemin):
+def exporter(obs, chemin):
+    obs = obs if isinstance(obs, (list, tuple)) else [obs]
     for o in bpy.context.view_layer.objects:
-        o.select_set(o == ob)
-    bpy.context.view_layer.objects.active = ob
+        o.select_set(o in obs)
+    bpy.context.view_layer.objects.active = obs[0]
     bpy.ops.export_scene.fbx(
         filepath=chemin, use_selection=True, object_types={"MESH"},
         apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
@@ -142,9 +148,10 @@ def exporter(ob, chemin):
         bake_anim=False, path_mode="AUTO", embed_textures=False,
     )
     taille = os.path.getsize(chemin) / 1e6
-    me = ob.data
-    print(f"-> {os.path.relpath(chemin, ROOT)} : {len(me.vertices)} sommets, {len(me.polygons)} faces, "
-          f"{len(me.shape_keys.key_blocks) - 1} blend shapes, {taille:.1f} Mo")
+    for ob in obs:
+        me = ob.data
+        print(f"-> {os.path.relpath(chemin, ROOT)} / {ob.name} : {len(me.vertices)} sommets, "
+              f"{len(me.polygons)} faces, {len(me.shape_keys.key_blocks) - 1} blend shapes, {taille:.1f} Mo")
 
 
 # --------------------------------------------------------------------------- objets
@@ -193,11 +200,31 @@ def jouet(kind):
     return figer(ob, ob.name, variantes)
 
 
+def torse():
+    """Torse + queue (enfant), figés avec toutes leurs blend shapes, à l'échelle 1."""
+    from poche_canine.build_torse import creer as creer_torse
+    ob, queue, _, _ = creer_torse()
+    ob.animation_data_clear()                       # pilote de la propriété Echelle
+    ob.scale = (1.0, 1.0, 1.0)
+    figes = []
+    for o, nom in ((ob, "Onahole_Torse"), (queue, "Onahole_Queue")):
+        o.modifiers["Subdivision"].levels = SUBDIV_TORSE
+        cles = [kb.name for kb in o.data.shape_keys.key_blocks[1:]]
+        variantes = [(c, (lambda o=o, c=c: set_keys(o, **{c: 1.0})), (lambda o=o: set_keys(o))) for c in cles]
+        set_keys(o)
+        figes.append(figer(o, nom, variantes))
+    figes[1].parent = figes[0]
+    return figes
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     studio.reset_scene()
     for kind in SEULEMENT:
         print(f"== {kind}")
+        if kind == "torse":
+            exporter(torse(), os.path.join(OUT, "Onahole_Torse.fbx"))
+            continue
         ob = poche() if kind == "poche" else poche(kind) if kind in VARIANTES else jouet(kind)
         exporter(ob, os.path.join(OUT, f"{ob.name}.fbx"))
 

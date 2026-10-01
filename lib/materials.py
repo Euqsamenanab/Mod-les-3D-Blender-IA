@@ -4,8 +4,8 @@ Tous les réglages sont des entrées du groupe de nœuds « Latex_Reglages ».
 Dans Blender : Propriétés > Matériau > Surface, les curseurs apparaissent
 directement. Chaque objet a son propre matériau, donc ses propres réglages.
 
-Les zones teintées (vulve, intérieur) viennent de l'attribut de couleur
-« Masques » du maillage : R = vulve, G = intérieur.
+Les zones teintées viennent de l'attribut de couleur « Masques » du maillage :
+R = vulve (et anus), G = intérieur, B = aréoles (torse).
 
 Vue en coupe : quand la géométrie porte l'attribut « coupe » (posé par le test
 d'insertion), les faces vues de dos (l'intérieur exposé par la coupe) sont rendues
@@ -24,6 +24,8 @@ INPUTS = [
     ("Teinte Vulve", "NodeSocketFloat", 0.85, 0.0, 1.0),
     ("Couleur Interieur", "NodeSocketColor", (0.75, 0.18, 0.25, 1.0), None, None),
     ("Teinte Interieur", "NodeSocketFloat", 0.8, 0.0, 1.0),
+    ("Couleur Areoles", "NodeSocketColor", (0.55, 0.24, 0.26, 1.0), None, None),
+    ("Teinte Areoles", "NodeSocketFloat", 0.7, 0.0, 1.0),
 ]
 
 
@@ -72,7 +74,9 @@ def latex_group():
 
     f_vulve = mul(sep.outputs["Red"], gi.outputs["Teinte Vulve"], (-500, 250))
     f_int = mul(sep.outputs["Green"], gi.outputs["Teinte Interieur"], (-500, 100))
-    c1 = mix(f_vulve, gi.outputs["Couleur"], gi.outputs["Couleur Vulve"], (-300, 250))
+    f_are = mul(sep.outputs["Blue"], gi.outputs["Teinte Areoles"], (-500, 400))
+    c0 = mix(f_are, gi.outputs["Couleur"], gi.outputs["Couleur Areoles"], (-400, 400))
+    c1 = mix(f_vulve, c0, gi.outputs["Couleur Vulve"], (-300, 250))
     base = mix(f_int, c1, gi.outputs["Couleur Interieur"], (-100, 200))
 
     # Reflet 0 -> mat, 1 -> très brillant
