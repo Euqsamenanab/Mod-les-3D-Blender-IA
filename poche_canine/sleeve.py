@@ -188,26 +188,34 @@ def y_slit_outline(vS, vJ, ua, va, w, counts):
 
 
 def ouvrir_fente(slit, vS, vJ, ua, va, ouverture, portee, lentille):
-    """Écarte les bords de la fente : autour de la jonction du Y (`ouverture`, sur `portee`)
-    et en lentille le long de la tige (`lentille`). Chaque point s'éloigne de l'axe du Y."""
+    """Écarte les bords de la fente : en lentille le long de la tige (`lentille`), puis en un
+    trou rond autour de la jonction du Y (rayon `ouverture`, effet limité à `portee`).
+
+    L'ouverture de la jonction pousse chaque point à l'écart de la jonction, le long de son
+    rayon : r -> sqrt(r² + R² exp(-(r / portee)²)). Cette fonction est croissante (R < portee),
+    donc les points gardent leur angle et leur ordre : le contour ne peut pas se croiser, et
+    la pointe des trois coussinets s'arrondit au lieu de se replier.
+    """
     J = np.array([0.0, vJ])
-    segs = [(np.array([0.0, vS]), J), (J, J + np.array([ua, va])), (J, J + np.array([-ua, va]))]
     out = slit.copy()
-    for i, p in enumerate(slit):
-        best = None
-        for s, (a, b) in enumerate(segs):
-            ab = b - a
-            t = float(np.clip(np.dot(p - a, ab) / np.dot(ab, ab), 0, 1))
-            q = a + t * ab
+    if lentille:
+        S = np.array([0.0, vS])
+        tige = J - S
+        for i, p in enumerate(slit):
+            t = float(np.clip(np.dot(p - S, tige) / np.dot(tige, tige), 0, 1))
+            q = S + t * tige
+            # seulement les points du bord de la tige (plus proches de la tige que des bras)
+            bras = min(abs(np.cross(np.array([ua * sx, va]), p - J)) / math.hypot(ua, va)
+                       if np.dot(p - J, np.array([ua * sx, va])) > 0 else np.inf for sx in (1, -1))
             dist = np.linalg.norm(p - q)
-            if best is None or dist < best[0]:
-                best = (dist, q, s, t)
-        dist, q, s, t = best
-        n = (p - q) / dist if dist > 1e-12 else np.array([1.0 if p[0] >= 0 else -1.0, 0.0])
-        o = ouverture * math.exp(-(np.linalg.norm(q - J) / portee) ** 2)
-        if s == 0:
-            o += lentille * max(0.0, math.sin(math.pi * t)) ** 1.5
-        out[i] = p + o * n
+            if dist <= bras and dist > 1e-12:
+                out[i] = p + lentille * max(0.0, math.sin(math.pi * t)) ** 1.5 * (p - q) / dist
+    if ouverture:
+        R = min(ouverture, 0.95 * portee)
+        d = out - J
+        r = np.linalg.norm(d, axis=1)
+        f = np.sqrt(r * r + R * R * np.exp(-(r / portee) ** 2))
+        out = J + d * (f / np.maximum(r, 1e-12))[:, None]
     return out
 
 
@@ -486,11 +494,13 @@ def echelle_corps(P, d):
     return 1.0 - P["waist"] * math.exp(-((d - P["waist_d"]) / P["waist_s"]) ** 2)
 
 
-def anneaux_corps(P, section, transition=None):
+def anneaux_corps(P, section, transition=None, face_arriere=False):
     """Arrondi avant, flancs et arrière : liste de (pts3d (N,3), tag), et la fonction du cap arrière.
 
     section (N,2) : section de référence (rho = 1) ; transition (N,2) : section ellipse
     régulière vers laquelle on glisse dans l'arrondi avant (sections non régulières).
+    face_arriere : l'arrondi arrière s'arrête au bord de la face arrière (rho_rim), qui
+    porte une seconde entrée (poche traversante) ; sinon il descend jusqu'au cap.
     """
     m = P["m"]
     mb = P["m_back"] or m
@@ -511,7 +521,11 @@ def anneaux_corps(P, section, transition=None):
     for d in np.linspace(P["Df"], L - Db, n_side + 1)[1:] if n_side >= 1 else []:
         out.append((np.column_stack([echelle_corps(P, d) * section, np.full(len(section), d)]), "flanc"))
     s_dos = echelle_corps(P, L - Db)
-    for t in np.linspace(0, P["back_tmax"] * math.pi / 2, P["back_n"] + 1)[1:]:
+    if face_arriere:
+        ts_dos = np.linspace(0, math.acos(P["rho_rim"] ** (mb / 2)), P["corner_n"] + 1)[1:-1]
+    else:
+        ts_dos = np.linspace(0, P["back_tmax"] * math.pi / 2, P["back_n"] + 1)[1:]
+    for t in ts_dos:
         rho = s_dos * math.cos(t) ** (2 / mb)
         out.append((np.column_stack([rho * section, np.full(len(section), L - Db * (1 - math.sin(t) ** (2 / mb)))]),
                     "arriere"))
@@ -589,6 +603,8 @@ def build(P=None, **overrides):
     base, P = _parametres(P, overrides)
     if P["entree"] == "double":
         return build_double(base, P)
+    if P["entree"] == "traversant":
+        return build_traversant(base, P)
     N = P["N"]
     A, B = P["A"], P["B"]
     rm = RingMesh(N)
@@ -622,6 +638,129 @@ def build(P=None, **overrides):
                  coutures=_boucles(N, (0, r["coupe"], r["ouverture"], r["bord"], r["couronne"], ring_dos),
                                    (0, ring_dos)),
                  zones_faces=zones, echelles_uv={"levres": 2.0, "face": 1.2})
+    return world, faces, attrs, infos
+
+
+# --------------------------------------------------------------------------- poche traversante
+def face_arriere(P, uv):
+    """Profondeur de la face arrière (seconde entrée) : l'arrondi arrière vu de derrière."""
+    L, Db = P["L"], P["Db"]
+    mb = P["m_back"] or P["m"]
+    s = echelle_corps(P, L - Db)
+    rho = np.clip(np.sqrt((uv[:, 0] / (s * P["A"])) ** 2 + (uv[:, 1] / (s * P["B"])) ** 2), 0, 0.999999)
+    return L - Db * (1 - (1 - rho ** mb) ** (1 / mb))
+
+
+def canal_traversant(P, ent_v, d_ouv_v, d0_v, ent_a, d_ouv_a, d0_a):
+    """Canal unique de la vulve (profondeur d0_v) à l'anus (d0_a), avec l'anneau d'entrée et
+    la chambre du nœud de chaque côté : chaque entrée peut servir d'entrée ou de sortie.
+
+    Retourne (anneaux de l'anus vers la vulve, sans les ouvertures [(pts3d, tag, vulve,
+    interieur)], index de l'anneau de coupe UV, longueur entre les deux vestibules).
+    """
+    N = len(ent_v["ouverture"])
+    Pv, Pa = params_canal(P), params_canal(P, "anus_")
+    th = -math.pi / 2 + 2 * math.pi * np.arange(N) / N
+
+    def cote(Pc):
+        """Profil d'un côté, de l'entrée jusqu'au point qui suit la chambre du nœud."""
+        xs, rs = canal_profile(Pc)
+        n = [k[2] for k in Pc["canal_keys"]].index("chambre_fin") + 2
+        return xs[:n], rs[:n]
+
+    xs_v, rs_v = cote(Pv)
+    xs_a, rs_a = cote(Pa)
+    profil = (np.concatenate([d0_v + xs_v, (d0_a - xs_a)[::-1]]), np.concatenate([rs_v, rs_a[::-1]]))
+    assert np.all(np.diff(profil[0]) > 0), "poche trop courte pour une chambre du nœud de chaque côté"
+    dv, da = d0_v + Pv["vest_depth"], d0_a - Pa["vest_depth"]
+
+    def axe(d):
+        w = smoothstep((d - dv) / (da - dv))
+        return ent_v["axe"] + w * (ent_a["axe"] - ent_v["axe"])
+
+    def vestibule(ent, d_ouv, d_fin, M):
+        circ = circle(canal_radius(profil, d_fin)[0], N, axe(d_fin))
+        out = []
+        for j in range(1, M + 1):
+            t = j / M
+            e = smoothstep(t) ** 0.8
+            uv = ent["ouverture"] + e * (circ - ent["ouverture"])
+            out.append((np.column_stack([uv, d_ouv + (d_fin - d_ouv) * t]), "vestibule", 1.0, 1.0))
+        return out
+
+    n = max(2, round((da - dv) / P["canal_step"]))
+    tube = []
+    for d in np.linspace(dv, da, n + 1)[1:-1]:
+        r = canal_radius(profil, d)[0]
+        mask = float(smoothstep((d - d0_v - 0.032) / 0.010) * smoothstep((d0_a - d - 0.028) / 0.010))
+        rr = np.maximum(r - mask * canal_relief(P["canal_variant"], d - d0_v, th), 0.002)
+        c = axe(d)
+        tube.append((np.column_stack([c[0] + rr * np.cos(th), c[1] + rr * np.sin(th), np.full(N, d)]),
+                     "canal", 0.0, 1.0))
+    vest_a = vestibule(ent_a, d_ouv_a, da, Pa["M_vest"])
+    vest_v = vestibule(ent_v, d_ouv_v, dv, Pv["M_vest"])
+    return vest_a + tube[::-1] + vest_v[::-1], len(vest_a) + len(tube) // 2, da - dv
+
+
+def build_traversant(base, P):
+    """Poche traversante : vulve devant, anus derrière, un seul canal entre les deux.
+
+    Chaîne fermée d'anneaux (un tore, sans cap) : fente -> lèvres -> face avant -> arrondi
+    avant -> flancs -> arrondi arrière -> face arrière -> bourrelet de l'anus -> ouverture
+    de l'anus -> vestibule -> canal -> vestibule -> retour à la fente.
+    """
+    N = P["N"]
+    A, B = P["A"], P["B"]
+    rm = RingMesh(N)
+    ent_v = vulve(P, N, base=base)
+    ent_a = anus(P, N)
+    d0_v = float(face_depth(P, ent_v["axe"][None])[0])
+    d0_a = float(face_arriere(P, ent_a["axe"][None])[0])
+    d_ouv_v = face_depth(P, ent_v["ouverture"]) - ent_v["h_ouverture"]
+    d_ouv_a = face_arriere(P, ent_a["ouverture"]) + ent_a["h_ouverture"]
+
+    r = {}
+    rm.add_ring(np.column_stack([ent_v["ouverture"], d_ouv_v]), "fente", vulve=1.0, interieur=1.0)
+    for uv, h, at in ent_v["anneaux"]:
+        rm.add_ring(np.column_stack([uv, face_depth(P, uv) - h]), "levres", **at)
+    r["bord_vulve"] = len(rm.rings) - 1
+    section = ellipse(A, B, N)
+    rim = P["rho_rim"] * section
+    for i, s in enumerate(P["face_s"]):
+        uv = ent_v["contour"] + s * (rim - ent_v["contour"])
+        rm.add_ring(np.column_stack([uv, face_depth(P, uv)]), "face", vulve=0.35 if i == 0 else 0.0, interieur=0.0)
+    r["bord_face"] = len(rm.rings) - 1
+    corps, _ = anneaux_corps(P, section, face_arriere=True)
+    for pts, tag in corps:
+        rm.add_ring(pts, tag)
+    rim_b = P["rho_rim"] * echelle_corps(P, P["L"] - P["Db"]) * section
+    r["bord_arriere"] = len(rm.rings)
+    for s in P["face_s"][::-1]:
+        uv = ent_a["contour"] + s * (rim_b - ent_a["contour"])
+        rm.add_ring(np.column_stack([uv, face_arriere(P, uv)]), "face_arriere",
+                    vulve=0.35 if s == P["face_s"][0] else 0.0, interieur=0.0)
+    r["bord_anus"] = len(rm.rings)
+    for uv, h, at in ent_a["anneaux"][::-1]:
+        rm.add_ring(np.column_stack([uv, face_arriere(P, uv) + h]), "anus", **at)
+    r["ouverture_anus"] = len(rm.rings)
+    rm.add_ring(np.column_stack([ent_a["ouverture"], d_ouv_a]), "anus", vulve=1.0, interieur=1.0)
+    tube, i_coupe, longueur = canal_traversant(P, ent_v, d_ouv_v, d0_v, ent_a, d_ouv_a, d0_a)
+    r["coupe"] = len(rm.rings) + i_coupe
+    for pts, tag, vu, it in tube:
+        rm.add_ring(pts, tag, vulve=vu, interieur=it)
+
+    verts, faces, attrs = rm.build(ferme=True)
+    world = np.column_stack([verts[:, 0], verts[:, 2], verts[:, 1] + B])
+    R = len(rm.rings)
+    boucles = (0, r["bord_vulve"], r["bord_face"], r["bord_arriere"], r["bord_anus"], r["ouverture_anus"], r["coupe"])
+    coutures = _boucles(N, boucles, (0, R - 1)) + [((R - 1) * N, 0)]
+    zones = _zones(N, [("levres", r["bord_vulve"]), ("face", r["bord_face"]), ("corps", r["bord_arriere"]),
+                       ("face_arriere", r["bord_anus"]), ("anus", r["ouverture_anus"]), ("canal", R)])
+    infos = dict(axe_canal_z=float(ent_v["axe"][1] + B), axe_anus_z=float(ent_a["axe"][1] + B),
+                 profondeur_canal=d0_a - d0_v, profondeur_anus=d0_a - d0_v, longueur_tube=longueur,
+                 n_anneaux=R, tags=rm.tags, N=N, profondeurs=[float(x[:, 2].mean()) for x in rm.rings],
+                 coutures=coutures, zones_faces=zones,
+                 echelles_uv={"levres": 2.0, "anus": 2.0, "face": 1.2, "face_arriere": 1.2})
     return world, faces, attrs, infos
 
 

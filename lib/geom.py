@@ -181,13 +181,14 @@ class RingMesh:
                                  for k, v in attrs.items()} | {"_m": m})
         self.cap_faces.append((ring_id, order, base, faces))
 
-    def build(self):
+    def build(self, ferme=False):
+        """ferme : relie aussi le dernier anneau au premier (tube refermé en tore, sans cap)."""
         n = self.n
         R = len(self.rings)
         verts = np.vstack(self.rings + ([np.asarray(self.extra_verts)] if self.extra_verts else []))
         faces = []
-        for r in range(R - 1):
-            a, b = r * n, (r + 1) * n
+        for r in range(R if ferme else R - 1):
+            a, b = r * n, ((r + 1) % R) * n
             for k in range(n):
                 k2 = (k + 1) % n
                 faces.append((a + k, a + k2, b + k2, b + k))

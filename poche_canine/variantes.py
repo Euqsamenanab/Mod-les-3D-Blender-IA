@@ -60,6 +60,9 @@ DOUBLE = dict(entree="double", anus_N=80, vulve_v=-0.036, milieu_v=0.004, milieu
               vulve_bas=-0.074, anus_centre_v=0.036, anus_haut=0.067,
               face_s_regions=(0.22, 0.48, 0.75, 1.0))
 ANUS_SEUL = dict(entree="anus", anus_v=-0.006, anus_R=0.024, anus_h=0.0135)
+# poche traversante : vulve devant, anus derrière (dans l'axe du canal), un seul canal ;
+# taille du sablier centrée pour deux bouts identiques
+TRAVERSANT = dict(entree="traversant", waist_d=0.12, Db=0.030, anus_R=0.021, anus_h=0.012)
 
 # --------------------------------------------------------------------------- shape keys
 CLES_CANAL = {
@@ -108,7 +111,11 @@ def cles_anus(P):
 
 
 def parametres(forme="cylindre", levres="classique", anus=None):
-    """Paramètres et shape keys d'une combinaison. anus : None, "seul" ou "double"."""
+    """Paramètres et shape keys d'une combinaison.
+
+    anus : None, "seul" (anus seul), "traversant" (vulve devant, anus derrière, un seul
+    canal) ou "double" (vulve et anus sur la même face, deux canaux : mini fessier).
+    """
     P = {**PARAMS, **FORMES[forme]}
     cles = {}
     if anus != "seul":
@@ -119,8 +126,13 @@ def parametres(forme="cylindre", levres="classique", anus=None):
         P.update(DOUBLE)
     if anus == "seul":
         P.update(ANUS_SEUL)
+    if anus == "traversant":
+        P.update(TRAVERSANT)
+        P["anus_v"] = 0.5 * (P["slit_vS"] + P["slit_vJ"])      # anus dans l'axe du canal de la vulve
     if anus:
-        cles.update(cles_anus(P))
+        # un seul canal en traversant : ses variantes sont les Canal_*, pas d'Anus_Canal_*
+        cles.update({k: v for k, v in cles_anus(P).items()
+                     if not (anus == "traversant" and k.startswith("Anus_Canal_"))})
     return P, cles
 
 
@@ -138,9 +150,9 @@ VARIANTES = {
         materiau={"Couleur Vulve": (0.16, 0.05, 0.06, 1.0), "Teinte Vulve": 0.9,
                   "Couleur Interieur": (0.85, 0.22, 0.30, 1.0)},
     ),
-    "Poche_Fessier_Double": dict(
-        forme="fessier", levres="fente", anus="double",
-        description="Mini fessier, petite fente + anus (deux canaux)",
+    "Poche_Sablier_Traversante": dict(
+        forme="sablier", levres="fente", anus="traversant",
+        description="Sablier traversant : petite fente devant, anus derrière, un seul canal",
         materiau={"Couleur Vulve": (0.72, 0.30, 0.32, 1.0), "Teinte Vulve": 0.75,
                   "Couleur Interieur": (0.85, 0.25, 0.32, 1.0)},
     ),
