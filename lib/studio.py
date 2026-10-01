@@ -105,6 +105,14 @@ def setup_render(scene, res=(1600, 1200), samples=128):
     scene.view_settings.view_transform = "AgX"
 
 
+def invisible(ob, hidden=True):
+    """Rend un objet invisible au rendu tout en le gardant évalué (utile pour les sources
+    lues par Geometry Nodes : hide_render les retirerait de l'évaluation)."""
+    for attr in ("visible_camera", "visible_diffuse", "visible_glossy", "visible_transmission",
+                 "visible_volume_scatter", "visible_shadow"):
+        setattr(ob, attr, not hidden)
+
+
 def render(scene, path, cam=None):
     if cam:
         scene.camera = cam

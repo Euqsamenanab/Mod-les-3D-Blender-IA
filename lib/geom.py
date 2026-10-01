@@ -154,7 +154,7 @@ class RingMesh:
         self.attrs = []      # liste de dict nom -> (N,)
         self.tags = []       # étiquette de zone par anneau
         self.extra_verts = []
-        self.extra_attrs = []
+        self.extra_attrs = []   # un dict nom -> (m,) par cap
         self.cap_faces = []
 
     def add_ring(self, pts3d, tag, **attrs):
@@ -169,13 +169,16 @@ class RingMesh:
         to2d : (N,3) -> (N,2) projection dans le plan du cap.
         to3d : (m,2) -> (m,3) placement des sommets intérieurs.
         quarter_offset : index de l'anneau qui se trouve à -45° dans ce plan.
+        attrs : valeur constante, ou fonction (m,2) -> (m,) des positions 2D intérieures.
         """
         ring = self.rings[ring_id]
         order = np.roll(np.arange(self.n), -quarter_offset)
         interior2d, faces = grid_cap(to2d(ring[order]))
         base = len(self.extra_verts)
         self.extra_verts.extend(to3d(interior2d))
-        self.extra_attrs.extend([attrs] * len(interior2d))
+        m = len(interior2d)
+        self.extra_attrs.append({k: (np.asarray(v(interior2d), float) if callable(v) else np.full(m, float(v)))
+                                 for k, v in attrs.items()} | {"_m": m})
         self.cap_faces.append((ring_id, order, base, faces))
 
     def build(self):
@@ -196,6 +199,6 @@ class RingMesh:
         attrs = {}
         for name in names:
             vals = [a.get(name, np.zeros(n)) for a in self.attrs]
-            vals.append(np.array([e.get(name, 0.0) for e in self.extra_attrs]))
+            vals += [e.get(name, np.zeros(e["_m"])) for e in self.extra_attrs]
             attrs[name] = np.concatenate(vals)
         return verts, faces, attrs

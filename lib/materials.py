@@ -6,6 +6,10 @@ directement. Chaque objet a son propre matériau, donc ses propres réglages.
 
 Les zones teintées (vulve, intérieur) viennent de l'attribut de couleur
 « Masques » du maillage : R = vulve, G = intérieur.
+
+Vue en coupe : quand la géométrie porte l'attribut « coupe » (posé par le test
+d'insertion), les faces vues de dos (l'intérieur exposé par la coupe) sont rendues
+dans une teinte sombre, comme une face de coupe.
 """
 import bpy
 
@@ -102,7 +106,31 @@ def latex_group():
     L.new(rough.outputs["Result"], p.inputs["Roughness"])
     L.new(coat, p.inputs["Coat Weight"])
     L.new(sss.outputs[0], p.inputs["Subsurface Weight"])
-    L.new(p.outputs["BSDF"], go.inputs["Shader"])
+
+    # vue en coupe : faces de dos assombries quand l'attribut « coupe » vaut 1
+    coupe = N.new("ShaderNodeAttribute")
+    coupe.attribute_name = "coupe"
+    coupe.location = (150, -450)
+    geo = N.new("ShaderNodeNewGeometry")
+    geo.location = (150, -600)
+    f_coupe = mul(coupe.outputs["Fac"], geo.outputs["Backfacing"], (350, -500))
+    sombre = N.new("ShaderNodeMix")
+    sombre.data_type = "RGBA"
+    sombre.blend_type = "MULTIPLY"
+    sombre.inputs[0].default_value = 1.0
+    sombre.inputs[7].default_value = (0.10, 0.10, 0.11, 1.0)
+    sombre.location = (150, -750)
+    L.new(base, sombre.inputs[6])
+    face = N.new("ShaderNodeBsdfDiffuse")
+    face.location = (350, -700)
+    L.new(sombre.outputs[2], face.inputs["Color"])
+    mix = N.new("ShaderNodeMixShader")
+    mix.location = (550, -200)
+    L.new(f_coupe, mix.inputs["Fac"])
+    L.new(p.outputs["BSDF"], mix.inputs[1])
+    L.new(face.outputs["BSDF"], mix.inputs[2])
+    L.new(mix.outputs["Shader"], go.inputs["Shader"])
+    go.location = (750, 0)
     return ng
 
 

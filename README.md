@@ -21,7 +21,10 @@ s'ouvrent dans Blender 4.3.x. Les rendus utilisent Cycles en CPU, sans interface
 | `lib/geom.py` | Géométrie : courbes 2D, ré-échantillonnage, maillage par anneaux, caps en grille de quads |
 | `lib/materials.py` | Matériau latex réglable (groupe de nœuds `Latex_Reglages`) |
 | `lib/studio.py` | Scène, lumières, caméras, rendu, contrôle qualité du maillage |
-| `poche_canine/` | Vagin de poche à vulve canine stylisée (anthro/furry) |
+| `lib/nodes.py` | Construction d'arbres Geometry Nodes depuis Python |
+| `poche_canine/` | Vagin de poche à vulve canine stylisée (anthro/furry) et sa scène de test |
+| `jouets/` | Jouets de test procéduraux en Geometry Nodes |
+| `deformation/` | Test d'insertion en Geometry Nodes (déformation instantanée) |
 | `output/` | Fichiers `.blend` et rendus générés |
 
 ## Vagin de poche (`poche_canine/`)
@@ -84,6 +87,7 @@ Propriétés > Matériau > Surface, groupe `Réglages Latex` :
 | Couleur Interieur / Teinte Interieur | Teinte de l'intérieur (fente et canal), avec son intensité |
 
 Les zones teintées viennent de l'attribut de couleur `Masques` (R = vulve, G = intérieur).
+Le même matériau sert aux jouets (chacun a son propre matériau, donc ses propres réglages).
 
 ### Rendus de validation (`output/poche_canine/`)
 
@@ -102,8 +106,72 @@ Les zones teintées viennent de l'attribut de couleur `Masques` (R = vulve, G = 
 | `10` | Planche des réglages de la vulve |
 | `11` | Planche des réglages de l'anneau d'entrée et de la chambre |
 
-### À venir
+## Jouets de test (`jouets/`)
 
-- Jouets de test réglables en Geometry Nodes : lisse, à perles (taille et écartement par perle), à nœud stylisé.
-- Tests de déformation : Geometry Nodes (instantané) et simulation physique, avec rigidité réglable.
+Trois jouets procéduraux, réglables en direct dans le modificateur `Generateur`
+(Propriétés > Modificateurs). Chaque jouet est un gabarit fixe de 47 040 quads
+(après subdivision niveau 1), dont la forme est calculée par Geometry Nodes à partir d'un
+profil de révolution : la topologie ne change jamais, quels que soient les réglages.
+
+| Jouet | Réglages |
+| --- | --- |
+| `Jouet_Lisse` | Longueur (23,5 cm), Diamètre (4,2 cm), Diamètre pointe, base, lissage |
+| `Jouet_Perles` | Nombre de perles (1 à 8), diamètre de chaque perle, écart après chaque perle (la longueur suit), diamètre de tige, allongement des perles, longueur du manche, base |
+| `Jouet_Noue` | Pointe → centre du nœud (15,5 cm), diamètre et longueur de la pointe effilée, diamètre et renflement de la tige, diamètre (6,2 cm) et longueur du nœud, col, base |
+
+La perle 1 est à la pointe. Les jouets lisse et à perles dépassent la longueur du
+canal, pour qu'il y ait une butée au fond.
+
+## Test d'insertion en Geometry Nodes
+
+```bash
+~/.venv-blender/bin/python poche_canine/build_test.py            # test_insertion.blend + rendus 20 à 26
+~/.venv-blender/bin/python poche_canine/build_test.py --quick --only=24
+```
+
+Dans `output/poche_canine/test_insertion.blend`, l'objet `Test_Insertion`
+(modificateur du même nom) réunit la poche et le jouet choisi :
+
+| Réglage | Rôle |
+| --- | --- |
+| Jouet | Jouet à insérer (Jouet_Lisse, Jouet_Perles, Jouet_Noue) |
+| Insertion | Profondeur de la pointe depuis la fente ; animée de l'image 1 à 200 (entrée, butée, maintien, retrait) |
+| Rigidité poche | 0 = latex très souple, 1 = rigide |
+| Rigidité jouet | 0 = jouet très souple, 1 = rigide |
+| Diffusion | Étalement de la déformation dans le latex |
+| Flexion | Part du tassement d'un jouet souple absorbée en flexion (partie restée dehors) |
+| Subdivision | Niveau de subdivision de la poche (1 en travail, 2 pour le rendu) |
+| Vue en coupe | Supprime la moitié avant pour voir le canal |
+
+`Poche_Canine_Source` (masqué) est la poche avec ses shape keys : les modifier
+(anneau, chambre, canal...) change directement le test. Les réglages des jouets
+s'appliquent aussi en direct.
+
+Modèle de déformation, instantané et sans simulation :
+- **Contact :** dans chaque direction autour de l'axe, le canal et le jouet se
+  rencontrent à un rayon de contact partagé selon leurs rigidités.
+- **Dilatation :** le latex se dilate à aire conservée (incompressible). La paroi du
+  canal suit le jouet, la matière autour suit, la surface extérieure gonfle et les
+  lèvres s'écartent.
+- **Diffusion :** la dilatation est étalée le long du latex, plus largement quand
+  il est rigide.
+- **Butée au fond :** le jouet pousse le fond du canal. Un jouet souple se tasse
+  (avec renflement) et fléchit dans la partie restée dehors.
+
+C'est une déformation cinématique : elle ne calcule pas de forces, donc pas de
+frottement ni de retenue du nœud. La simulation physique est l'étape suivante.
+
+### Rendus du test (`output/poche_canine/`)
+
+| Fichier | Vue |
+| --- | --- |
+| `20` | Les trois jouets |
+| `21` | Jouets : réglages par défaut et réglages modifiés |
+| `22`, `23`, `24` | Insertion en coupe : jouet lisse, à perles, noué |
+| `25` | Butée au fond : jouet rigide ou souple, latex souple ou ferme |
+| `26` | Jouet noué inséré, latex transparent |
+
+## À venir
+
+- Test de déformation en simulation physique, avec rigidité réglable du latex et des jouets.
 - UV propres, puis textures 4K/8K (masques de couleur, normal map des petits plis), export FBX pour Unity.
