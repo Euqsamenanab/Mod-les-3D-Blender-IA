@@ -1,6 +1,16 @@
 """Scène de simulation physique : output/poche_canine/test_physique.blend + rendus 30 à 32.
 
-Usage : python poche_canine/build_physique.py [--quick] [--no-render] [--only=30,31]
+Usage : python poche_canine/build_physique.py [--fps=30] [--boucles=1] [--vitesse=1] [--quick] [--no-render]
+        python poche_canine/build_physique.py --video [--fps=30] [--boucles=1] [--res=1920x1080] [--samples=64]
+                                              [--camera=exterieur|coupe] [--png --debut=1 --fin=170]
+        python poche_canine/build_physique.py --assembler [mêmes options]   (images PNG -> MP4)
+
+Un cycle dure 11,3 s à vitesse 1, quelle que soit la cadence (--fps) : entrée jusqu'à
+6,7 s, maintien en butée jusqu'à 7,9 s, retrait jusqu'à 10,8 s, retour au repos.
+--boucles=N enchaîne N cycles ; la première et la dernière image sont identiques, la
+vidéo boucle donc sans à-coup. --vitesse=2 rend le mouvement deux fois plus rapide.
+Le .blend est prêt pour le rendu vidéo : caméras « Cam_Exterieur » (latex transparent)
+et « Cam_Coupe », éclairage studio, sortie MP4 H.264 1920 x 1080 dans //rendu/.
 
 Principe (hybride, stable et propre) :
 - Poche_Proxy (masquée, ~4 200 sommets) : modificateur « Cible » (forme cible de la
@@ -37,10 +47,30 @@ QUICK = "--quick" in sys.argv
 RENDER = "--no-render" not in sys.argv
 ONLY = next((a.split("=", 1)[1].split(",") for a in sys.argv if a.startswith("--only=")), None)
 
+
+def option(nom, defaut):
+    return next((a.split("=", 1)[1] for a in sys.argv if a.startswith(f"--{nom}=")), defaut)
+
+
+FPS = int(option("fps", "30"))
+VIDEO = "--video" in sys.argv
+ASSEMBLER = "--assembler" in sys.argv
+
 PROXY = dict(N=48, canal_step=0.004, M_lip=10, M_vest=8, face_s=(0.1, 0.3, 0.6, 1.0),
              corner_n=3, side_step=0.02, back_n=4, end_n=3)
 COULEURS = {"lisse": (0.30, 0.55, 0.95, 1.0), "perles": (0.55, 0.30, 0.85, 1.0), "noue": (0.80, 0.30, 0.36, 1.0)}
-FIN = 260
+BOUCLES = int(option("boucles", "1"))
+VITESSE = float(option("vitesse", "1"))
+# moments clés d'un cycle (secondes) : fin de l'entrée, fin du maintien, fin du retrait, fin du repos
+T_ENTREE, T_MAINTIEN, T_RETRAIT, T_CYCLE = (t / VITESSE for t in (160 / 24, 190 / 24, 260 / 24, 272 / 24))
+
+
+def image(t):
+    """Numéro d'image correspondant à l'instant t (s) à la cadence choisie."""
+    return 1 + round(t * FPS)
+
+
+FIN = image(BOUCLES * T_CYCLE)
 
 
 def want(tag):
@@ -74,7 +104,7 @@ def longueur(ob):
 def build_scene(actif="noue"):
     scene = studio.reset_scene()
     scene.frame_start, scene.frame_end = 1, FIN
-    scene.render.fps = 24
+    scene.render.fps = FPS
 
     controle = bpy.data.objects.new("Reglages_Physique", None)
     scene.collection.objects.link(controle)
@@ -96,7 +126,7 @@ def build_scene(actif="noue"):
     jouets = {}
     for kind in ("lisse", "perles", "noue"):
         mat = latex_material(f"Latex_{kind.capitalize()}", Couleur=COULEURS[kind], Transparence=0.0, Reflet=0.75)
-        ob = creer_jouet(kind, mat)
+        ob = creer_jouet(kind, mat, subdivision=(0, 2))   # vue : léger pour la lecture ; rendu : lisse
         cj = ob.modifiers.new("Cible_Jouet", "NODES")
         cj.node_group = bpy.data.node_groups.get("Cible_Jouet") or arbre_cible_jouet()
         cj[sid(cj, "Poche repos")] = repos
@@ -110,9 +140,12 @@ def build_scene(actif="noue"):
         jouets[kind] = ob
     for kind, ob in jouets.items():
         L = longueur(ob)
-        for frame, pointe in ((1, -0.02), (160, fond + 0.015), (190, fond + 0.015), (FIN, -0.02)):
-            ob.location = (0.0, pointe - L, zc)
-            ob.keyframe_insert("location", frame=frame)
+        for b in range(BOUCLES):
+            t0 = b * T_CYCLE
+            for t, pointe in ((0.0, -0.02), (T_ENTREE, fond + 0.015), (T_MAINTIEN, fond + 0.015),
+                              (T_RETRAIT, -0.02), (T_CYCLE, -0.02)):
+                ob.location = (0.0, pointe - L, zc)
+                ob.keyframe_insert("location", frame=image(t0 + t))
         if kind != actif:
             ob.hide_render = True
             ob.hide_set(True)
@@ -128,7 +161,7 @@ def build_scene(actif="noue"):
     cible[sid(cible, "Fond du canal")] = fond
     driver(proxy, cible, "Rigidité poche", controle, "Rigidité latex")
     cloth = physique.cloth_latex(proxy, "Maintien", controle, "Rigidité latex", 2.5, 0.06)
-    cloth.settings.quality = 8
+    cloth.settings.quality = max(4, round(8 * 24 / FPS))   # même précision par seconde
     cloth.collision_settings.use_collision = False
     cloth.point_cache.frame_start, cloth.point_cache.frame_end = 1, FIN
     studio.invisible(proxy)
@@ -140,9 +173,31 @@ def build_scene(actif="noue"):
     sd.target = proxy
     with bpy.context.temp_override(object=poche, active_object=poche):
         bpy.ops.object.surfacedeform_bind(modifier=sd.name)
-    studio.add_subsurf(poche, 1, 2)
+    studio.add_subsurf(poche, 0, 2)
     coupe.ajouter(poche, False)
+    preparer_rendu(scene, poche)
     return scene, controle, poche, mat_poche, proxy, cloth, jouets
+
+
+def preparer_rendu(scene, poche):
+    """Studio, caméras et réglages de rendu vidéo enregistrés dans le .blend."""
+    zc = poche["axe_canal_z"]
+    studio.backdrop(scale=3.0)
+    studio.setup_render(scene, (1920, 1080), 64)
+    scene.cycles.device = "GPU"   # utilise le GPU s'il est configuré dans les préférences, sinon le CPU
+    studio.area_light("Cle", (-0.45, -0.55, 0.6), (0.0, 0.0, 0.06), 0.5, 30)
+    studio.area_light("Contre", (0.45, 0.45, 0.4), (0.0, 0.05, 0.08), 0.3, 12, (0.95, 0.97, 1.0))
+    studio.area_light("Coupe", (0.5, 0.0, 0.45), (0, 0.02, zc), 0.6, 20)
+    cam_ext = studio.camera("Cam_Exterieur", (-0.46, -0.24, 0.24), (0.0, 0.0, 0.05), 35)
+    studio.camera("Cam_Coupe", (0.52, 0.02, zc + 0.28), (0, 0.02, zc), 40)
+    scene.camera = cam_ext
+    r = scene.render
+    r.image_settings.file_format = "FFMPEG"
+    r.ffmpeg.format = "MPEG4"
+    r.ffmpeg.codec = "H264"
+    r.ffmpeg.constant_rate_factor = "HIGH"
+    r.ffmpeg.ffmpeg_preset = "GOOD"
+    r.filepath = "//rendu/physique_noue_"
 
 
 def simuler(scene, jusqua):
@@ -158,14 +213,19 @@ def main():
     if not RENDER:
         return
 
+    if VIDEO:
+        return video(scene, poche, mat_poche)
+    if ASSEMBLER:
+        return assembler(scene)
+
     zc = poche["axe_canal_z"]
-    studio.backdrop(scale=3.0)
     res = (480, 300) if QUICK else (800, 500)
-    studio.setup_render(scene, res, 12 if QUICK else 48)
-    studio.area_light("Coupe", (0.5, 0.05, 0.45), (0, 0.05, zc), 0.6, 30)
-    studio.area_light("Contre", (0.45, 0.45, 0.4), (0.0, 0.05, 0.08), 0.3, 10, (0.95, 0.97, 1.0))
-    cam = studio.camera("Cam_Coupe_Physique", (0.40, 0.09, zc + 0.22), (0, 0.09, zc), 50)
-    scene.camera = cam
+    scene.render.resolution_x, scene.render.resolution_y = res
+    scene.cycles.samples = 12 if QUICK else 48
+    scene.cycles.device = "CPU"
+    scene.render.image_settings.file_format = "PNG"
+    scene.camera = studio.camera("Cam_Coupe_Validation", (0.40, 0.09, zc + 0.22), (0, 0.09, zc), 50)
+    bpy.data.objects["Cle"].hide_render = True
     latex_controls(mat_poche).inputs["Transparence"].default_value = 0.0
     coupe.regler(poche, True)
 
@@ -174,11 +234,11 @@ def main():
 
     # ---- séquence du jouet noué (entrée, nœud, butée, retrait)
     if want("30") or want("gif"):
-        images = (40, 80, 120, 160, 210, 235)
+        images = tuple(image(f / 24) for f in (40, 80, 120, 160, 210, 235))
         tiles, labels, gif = [], [], []
         for frame in range(1, FIN + 1):
             scene.frame_set(frame)
-            if want("gif") and frame % 4 == 1:
+            if want("gif") and frame % max(1, round(FPS / 6)) == 1:
                 scene.render.resolution_x, scene.render.resolution_y = (320, 200) if QUICK else (480, 300)
                 scene.cycles.samples = 8
                 gif.append(studio.render(scene, out(f"_gif_{frame:03d}.png")))
@@ -186,7 +246,7 @@ def main():
                 scene.cycles.samples = 12 if QUICK else 48
             if want("30") and frame in images:
                 tiles.append(studio.render(scene, out(f"_tile_30_{frame}.png")))
-                labels.append(f"Image {frame}")
+                labels.append(f"{(frame - 1) / FPS:.1f} s")
         if tiles:
             studio.contact_sheet(tiles, labels, out("30_physique_noue.png"), cols=3)
         if gif:
@@ -210,10 +270,56 @@ def main():
             cloth.point_cache.frame_start = 1
             cloth.settings.quality = cloth.settings.quality
             scene.frame_set(1)
-            simuler(scene, 170)
+            simuler(scene, image(170 / 24))
             tiles.append(studio.render(scene, out(f"_tile_31_{len(tiles)}.png")))
             labels.append(label)
         studio.contact_sheet(tiles, labels, out("31_physique_rigidites.png"), cols=2)
+
+
+def nom_video():
+    h = option("res", "1920x1080").split("x")[1]
+    return f"physique_noue_{option('camera', 'exterieur')}_{h}p{FPS}_x{BOUCLES}"
+
+
+def video(scene, poche, mat_poche):
+    """Rendu de l'animation : MP4 direct, ou images PNG par tranche (--png --debut --fin)."""
+    w, h = (int(x) for x in option("res", "1920x1080").split("x"))
+    scene.render.resolution_x, scene.render.resolution_y = w, h
+    scene.cycles.samples = int(option("samples", "64"))
+    scene.cycles.device = "CPU"
+    if option("camera", "exterieur") == "coupe":
+        scene.camera = bpy.data.objects["Cam_Coupe"]
+        latex_controls(mat_poche).inputs["Transparence"].default_value = 0.0
+        coupe.regler(poche, True)
+    os.makedirs(os.path.join(OUT, "rendu"), exist_ok=True)
+    debut, fin = int(option("debut", "1")), int(option("fin", str(FIN)))
+    simuler(scene, fin)                     # remplit le cache de la simulation, dans l'ordre
+    if "--png" in sys.argv:
+        scene.render.image_settings.file_format = "PNG"
+        scene.render.filepath = os.path.join(OUT, "rendu", nom_video(), "####")
+    else:
+        scene.render.filepath = os.path.join(OUT, "rendu", nom_video() + "_")
+    scene.frame_start, scene.frame_end = debut, fin
+    bpy.ops.render.render(animation=True)
+
+
+def assembler(scene):
+    """Assemble les images PNG rendues par tranches en une vidéo MP4 (séquenceur vidéo)."""
+    dossier = os.path.join(OUT, "rendu", nom_video())
+    images = sorted(f for f in os.listdir(dossier) if f.endswith(".png"))
+    seq = scene.sequence_editor_create()
+    strip = seq.sequences.new_image("images", os.path.join(dossier, images[0]), channel=1, frame_start=1)
+    for f in images[1:]:
+        strip.elements.append(f)
+    scene.frame_start, scene.frame_end = 1, len(images)
+    from PIL import Image
+    w, h = Image.open(os.path.join(dossier, images[0])).size
+    scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = w, h, 100
+    scene.render.use_sequencer = True
+    scene.render.filepath = os.path.join(OUT, "rendu", nom_video() + ".mp4")
+    scene.render.use_file_extension = False
+    bpy.ops.render.render(animation=True)
+    print("vidéo :", scene.render.filepath)
 
 
 main()

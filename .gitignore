@@ -3,3 +3,4 @@ __pycache__/
 *.blend1
 output/**/_tile_*.png
 output/**/_gif_*.png
+output/**/rendu/*/
