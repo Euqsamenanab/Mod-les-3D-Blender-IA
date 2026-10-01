@@ -185,7 +185,8 @@ def main():
 
     mtex = materiau_texture(images, reglages)
     poche.data.materials.append(mtex)                 # 2e matériau disponible (non assigné)
-    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, "poche_canine_textures.blend"), compress=True)
+    nom_blend = "poche_canine_textures.blend" if RES == 4096 else f"poche_canine_textures_{SUFFIXE}.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, nom_blend), compress=True)
     bpy.ops.file.make_paths_relative()                # textures en chemins relatifs (//textures/...)
     bpy.ops.wm.save_mainfile(compress=True)
     if "--no-render" in sys.argv:

@@ -325,8 +325,12 @@ empaquetage, avec 71 % d'occupation.
   matériau latex par défaut.
 - **Après une modification des couleurs du matériau :** relancer le script pour
   recuire les cartes.
-- **Fichier `poche_canine_textures.blend` :** la poche avec ses UV et un 2ᵉ matériau,
-  `Latex_Poche_Textures`, qui utilise les cartes, comme dans Unity.
+- **Fichiers `poche_canine_textures.blend` (4K) et `poche_canine_textures_8k.blend` :**
+  la poche avec ses UV et un 2ᵉ matériau, `Latex_Poche_Textures`, qui utilise les
+  cartes, comme dans Unity. Les chemins des textures sont relatifs (`//textures/...`).
+- **AO du canal :** le canal est presque noir dans la carte AO, car c'est un tube
+  fermé. Si le latex est transparent dans Unity, baisser la force de l'occlusion pour
+  garder l'intérieur visible.
 
 ### UV des jouets
 
