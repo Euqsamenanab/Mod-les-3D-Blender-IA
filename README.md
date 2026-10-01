@@ -45,9 +45,18 @@ Les dimensions et formes sont dans `PARAMS` (`poche_canine/sleeve.py`).
 
 ### Shape keys
 
-| Shape key | Effet |
+Toutes vont de 0 (forme de base) à 1, se combinent entre elles et passent dans
+Unity sous forme de blend shapes (0 à 100). Chaque réglage dans les deux sens
+correspond à une paire de shape keys.
+
+| Shape key | Effet à 1 |
 | --- | --- |
-| `Levres_Gonflees` | Lèvres plus hautes et plus pulpeuses (curseur de -0,5 à 1,5) |
+| `Vulve_Grande` / `Vulve_Petite` | Vulve entière (contour + fente) agrandie de 20 % / réduite de 20 % |
+| `Levres_Gonflees` / `Levres_Fines` | Lèvres plus hautes et pulpeuses, avec débord / plus plates |
+| `Fente_Branches_Longues` / `Fente_Branches_Courtes` | Branches du Y : × 1,6 / × 0,45 |
+| `Pointe_Allongee` / `Pointe_Arrondie` | Pointe du bas plus longue et fine (+1 cm) / plus courte et ronde (-1 cm) |
+| `Anneau_Serre` / `Anneau_Large` | Anneau d'entrée Ø 7 mm (verrouillage franc) / Ø 15 mm (verrouillage souple) |
+| `Chambre_Large` / `Chambre_Fine` | Chambre du nœud Ø 36 mm / Ø 18 mm |
 | `Canal_Anneaux` | Anneaux dans le canal |
 | `Canal_Nervures` | Nervures longitudinales |
 | `Canal_Picots` | Picots en quinconce |
@@ -55,7 +64,12 @@ Les dimensions et formes sont dans `PARAMS` (`poche_canine/sleeve.py`).
 | `Canal_Anneaux_Picots` | Anneaux et picots alternés |
 | `Canal_Nervures_Plis` | Nervures et plis |
 
-Canal lisse : toutes les shape keys `Canal_*` à 0. Les variantes se mélangent si besoin.
+Canal lisse : toutes les shape keys `Canal_*` à 0.
+
+Les shape keys sont définies dans `SHAPE_KEYS` (`poche_canine/sleeve.py`) : pour
+changer une amplitude, modifier la valeur et relancer le build. Les contours de la
+fente et de la vulve ont une paramétrisation fixe : chaque sommet garde sa place
+quand une dimension change, donc les réglages se combinent sans artefacts.
 
 ### Matériau
 
@@ -85,6 +99,8 @@ Les zones teintées viennent de l'attribut de couleur `Masques` (R = vulve, G = 
 | `07`, `08` | Topologie |
 | `09` | Profil |
 | `09b` | Profil, lèvres gonflées |
+| `10` | Planche des réglages de la vulve |
+| `11` | Planche des réglages de l'anneau d'entrée et de la chambre |
 
 ### À venir
 

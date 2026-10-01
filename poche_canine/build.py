@@ -13,7 +13,7 @@ import numpy as np  # noqa: E402
 
 from lib import studio  # noqa: E402
 from lib.materials import latex_controls, latex_material, simple_material  # noqa: E402
-from poche_canine.sleeve import CANAL_VARIANTS, PARAMS, build  # noqa: E402
+from poche_canine.sleeve import CANAL_VARIANTS, SHAPE_KEYS, build  # noqa: E402
 
 OUT = os.path.join(ROOT, "output", "poche_canine")
 QUICK = "--quick" in sys.argv
@@ -23,12 +23,6 @@ ONLY = next((a.split("=", 1)[1].split(",") for a in sys.argv if a.startswith("--
 
 def want(tag):
     return ONLY is None or tag in ONLY
-
-LEVRES_GONFLEES = dict(
-    lip_h=0.98,
-    lip_profile=((0.0, 0.0), (0.0, 0.22), (0.025, 0.55), (0.09, 0.82), (0.19, 0.97), (0.33, 1.03),
-                 (0.58, 1.0), (0.86, 0.80), (1.08, 0.42), (1.0, 0.0)),
-)
 
 
 def make_sleeve():
@@ -46,11 +40,8 @@ def make_sleeve():
         k.slider_min, k.slider_max = 0.0, 1.0
         return k
 
-    add_key("Levres_Gonflees", **LEVRES_GONFLEES)
-    for var in CANAL_VARIANTS:
-        add_key(f"Canal_{var}", canal_variant=var)
-    ob.data.shape_keys.key_blocks["Levres_Gonflees"].slider_min = -0.5
-    ob.data.shape_keys.key_blocks["Levres_Gonflees"].slider_max = 1.5
+    for name, overrides in SHAPE_KEYS.items():
+        add_key(name, **overrides)
 
     studio.add_subsurf(ob, 1, 2)
     ob["axe_canal_z"] = infos["axe_canal_z"]
@@ -108,6 +99,7 @@ def main():
     cam_34 = studio.camera("Cam_34", (-0.26, -0.34, 0.22), (0.0, 0.05, 0.055), 60)
     cam_coupe = studio.camera("Cam_Coupe", (0.42, 0.105, zc + 0.06), (0, 0.105, zc), 50)
     cam_profil = studio.camera("Cam_Profil", (-0.40, -0.02, 0.07), (0, -0.02, 0.065), 85)
+    cam_entree = studio.camera("Cam_Entree", (0.17, 0.045, zc + 0.02), (0, 0.045, zc), 50)
     cam_canal = studio.camera("Cam_Canal", (0.115, 0.075, zc + 0.03), (0, 0.075, zc), 50)
 
     ctl = latex_controls(mat)
@@ -143,6 +135,28 @@ def main():
     key.hide_render = True
     shot("04_coupe_canal_lisse.png", cam_coupe)
 
+    def sheet(tag, name, cam, combos, cols=3, tile=(600, 450)):
+        if not want(tag):
+            return
+        scene.render.resolution_x, scene.render.resolution_y = (240, 180) if QUICK else tile
+        tiles, labels = [], []
+        for i, (label, keys) in enumerate(combos):
+            set_keys(ob, **keys)
+            tiles.append(studio.render(scene, out(f"_tile_{tag}_{i}.png"), cam))
+            labels.append(label)
+        studio.contact_sheet(tiles, labels, out(name), cols=cols)
+        set_keys(ob)
+        scene.render.resolution_x, scene.render.resolution_y = res
+
+    sheet("11", "11_reglages_canal.png", cam_entree, [
+        ("Base", {}),
+        ("Anneau serre", {"Anneau_Serre": 1}),
+        ("Anneau large", {"Anneau_Large": 1}),
+        ("Chambre large", {"Chambre_Large": 1}),
+        ("Chambre fine", {"Chambre_Fine": 1}),
+        ("Anneau serre + chambre large", {"Anneau_Serre": 1, "Chambre_Large": 1}),
+    ], tile=(800, 500))
+
     if want("05"):
         tiles, labels = [], []
         scene.render.resolution_x, scene.render.resolution_y = (320, 200) if QUICK else (800, 500)
@@ -162,6 +176,20 @@ def main():
     ctl.inputs["Transparence"].default_value = 0.9
     scene.cycles.samples = 24 if QUICK else 160
     shot("06_latex_transparent.png", cam_34)
+    ctl.inputs["Transparence"].default_value = 0.0
+    scene.cycles.samples = 16 if QUICK else 64
+    sheet("10", "10_reglages_vulve.png", cam_face, [
+        ("Base", {}),
+        ("Vulve grande", {"Vulve_Grande": 1}),
+        ("Vulve petite", {"Vulve_Petite": 1}),
+        ("Levres gonflees", {"Levres_Gonflees": 1}),
+        ("Levres fines", {"Levres_Fines": 1}),
+        ("Branches longues", {"Fente_Branches_Longues": 1}),
+        ("Branches courtes", {"Fente_Branches_Courtes": 1}),
+        ("Pointe allongee", {"Pointe_Allongee": 1}),
+        ("Pointe arrondie", {"Pointe_Arrondie": 1}),
+    ])
+    ctl.inputs["Transparence"].default_value = 0.9
     scene.cycles.samples = 16 if QUICK else 64
 
     # ---------------------------------------------------------------- topologie

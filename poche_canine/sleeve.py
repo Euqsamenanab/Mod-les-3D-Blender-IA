@@ -7,19 +7,22 @@ Géométrie pure (numpy, sans bpy) : le maillage est une suite d'anneaux de N so
 
 Chaque anneau a la même indexation, donc toute variante de paramètres (lèvres
 gonflées, détails du canal) donne exactement la même topologie : c'est ce qui
-permet d'en faire des shape keys.
+permet d'en faire des shape keys (voir SHAPE_KEYS). Les contours de la fente et de
+la vulve sont échantillonnés avec une paramétrisation fixe : chaque sommet garde sa
+place « structurelle » quand on change une dimension, ce qui rend les shape keys
+propres et combinables.
 
 Repère local : u = horizontal, v = vertical (0 = axe du manchon), d = profondeur
 (0 = face avant, positif vers l'intérieur). Repère Blender : X = u, Y = d, Z = v + B.
 Unités : mètres.
 """
 import copy
+import functools
 import math
 
 import numpy as np
 
-from lib.geom import (RingMesh, catmull_rom_open, circle, closed_bspline, ellipse, resample_closed, resample_open,
-                      smooth_periodic, smoothstep)
+from lib.geom import RingMesh, catmull_rom_open, circle, ellipse, resample_open, smooth_periodic, smoothstep
 
 PARAMS = dict(
     N=96,                      # sommets par anneau (multiple de 8)
@@ -33,10 +36,13 @@ PARAMS = dict(
     corner_n=6, side_step=0.010, back_n=7, back_tmax=0.82,
     # --- vulve : contour en triangle inversé arrondi (points de contrôle B-spline)
     vulva_scale=0.85,
+    vulva_size=1.0,            # échelle de toute la vulve (contour + fente) autour de l'axe du canal
+    tip=0.0,                   # pointe du bas : +1 allongée et fine, -1 courte et arrondie
     vulva_ctrl=((0.0, -0.050), (0.014, -0.034), (0.028, -0.006), (0.036, 0.022), (0.030, 0.040),
                 (0.0, 0.042), (-0.030, 0.040), (-0.036, 0.022), (-0.028, -0.006), (-0.014, -0.034)),
     # --- fente en Y (fermée) : bas de la tige, jonction, bras, demi-écart
     slit_vS=-0.031, slit_vJ=0.006, slit_ua=0.011, slit_va=0.013, slit_w=0.0004,
+    arm_len=1.0,               # longueur des branches du Y (multiplicateur)
     # --- lèvres
     M_lip=24,                  # boucles entre la fente et le contour
     lip_h=0.75,                # hauteur max = lip_h x distance fente -> contour
@@ -49,52 +55,132 @@ PARAMS = dict(
     fold_amp=0.0006, fold_count=4, fold_span=9,   # petits plis vers la pointe basse
     # --- canal (x = profondeur depuis la fente)
     vest_depth=0.020, M_vest=16,
-    canal_keys=((0.020, 0.0065), (0.026, 0.0055), (0.034, 0.0070), (0.052, 0.0130),
-                (0.072, 0.0110), (0.088, 0.0078), (0.180, 0.0075)),
+    # profil du canal : (profondeur, rayon, rôle) ; les rôles reçoivent les réglages ci-dessous
+    canal_keys=((0.020, 0.0065, "vestibule"), (0.026, 0.0055, "anneau"), (0.034, 0.0070, None),
+                (0.052, 0.0130, "chambre"), (0.072, 0.0110, "chambre_fin"), (0.088, 0.0078, None),
+                (0.180, 0.0075, None)),
+    ring_dr=0.0,               # + : anneau d'entrée plus large (verrouillage souple), - : plus serré
+    chamber_dr=0.0,            # + : chambre du nœud plus large, - : plus fine
     canal_step=0.00125, end_n=5,
     canal_variant=None,
 )
 
 CANAL_VARIANTS = ("Anneaux", "Nervures", "Picots", "Plis", "Anneaux_Picots", "Nervures_Plis")
 
+# Shape keys : nom -> paramètres modifiés. Toutes vont de 0 (forme de base) à 1.
+SHAPE_KEYS = {
+    "Vulve_Grande": dict(vulva_size=1.2),
+    "Vulve_Petite": dict(vulva_size=0.8),
+    "Levres_Gonflees": dict(
+        lip_h=0.98,
+        lip_profile=((0.0, 0.0), (0.0, 0.22), (0.025, 0.55), (0.09, 0.82), (0.19, 0.97), (0.33, 1.03),
+                     (0.58, 1.0), (0.86, 0.80), (1.08, 0.42), (1.0, 0.0)),
+    ),
+    "Levres_Fines": dict(lip_h=0.50),
+    "Fente_Branches_Longues": dict(arm_len=1.6),
+    "Fente_Branches_Courtes": dict(arm_len=0.45),
+    "Pointe_Allongee": dict(tip=1.0),
+    "Pointe_Arrondie": dict(tip=-1.0),
+    "Anneau_Serre": dict(ring_dr=-0.002),
+    "Anneau_Large": dict(ring_dr=0.002),
+    "Chambre_Large": dict(chamber_dr=0.005),
+    "Chambre_Fine": dict(chamber_dr=-0.004),
+    **{f"Canal_{v}": dict(canal_variant=v) for v in CANAL_VARIANTS},
+}
+
+# réglage qui agit sur chaque rôle du profil du canal : (paramètre, poids)
+CANAL_ROLES = {
+    "vestibule": ("ring_dr", 0.75),
+    "anneau": ("ring_dr", 1.0),
+    "chambre": ("chamber_dr", 1.0),
+    "chambre_fin": ("chamber_dr", 0.8),
+}
+
 
 # --------------------------------------------------------------------------- contours 2D
-def y_slit_outline(vS, vJ, ua, va, w, n):
-    """Contour fermé d'une fente en Y très fine (demi-écart w), départ en bas, anti-horaire."""
+def _y_frame(vS, vJ, ua, va, w):
     J = np.array([0.0, vJ])
     dR = np.array([ua, va]) / math.hypot(ua, va)
     nlow = np.array([dR[1], -dR[0]])
     R = J + np.array([ua, va])
-
-    def line(a, b, k=300):
-        t = np.linspace(0, 1, k, endpoint=False)[:, None]
-        return a + t * (b - a)
-
-    def arc(c, a0, a1, k=40):
-        t = np.linspace(a0, a1, k, endpoint=False)
-        return np.column_stack([c[0] + w * np.cos(t), c[1] + w * np.sin(t)])
-
     P1 = J + w * nlow + (w * (1 - nlow[0]) / dR[0]) * dR
     notch = J - w * nlow + (w * nlow[0] / dR[0]) * dR
+    return R, nlow, P1, notch
+
+
+def slit_counts(vS, vJ, ua, va, w, n):
+    """Nombre de sommets par tronçon de la fente (calculé une fois, sur la forme de base)."""
+    R, nlow, P1, _ = _y_frame(vS, vJ, ua, va, w)
+    stem = np.linalg.norm(P1 - np.array([w, vS]))
+    arm = np.linalg.norm(R + w * nlow - P1)
+    rest = n // 2 - 1 - 2  # demi-boucle moins l'arc du bas (1) et l'arc du bout de bras (2)
+    c_arm = round(rest * arm / (stem + 2 * arm))
+    return 1, rest - 2 * c_arm, c_arm, 2
+
+
+def y_slit_outline(vS, vJ, ua, va, w, counts):
+    """Contour fermé d'une fente en Y très fine (demi-écart w), départ en bas, anti-horaire.
+
+    `counts` fixe le nombre de sommets de chaque tronçon : tige, bras, bouts arrondis.
+    """
+    c_bot, c_stem, c_arm, c_tip = counts
+    R, nlow, P1, notch = _y_frame(vS, vJ, ua, va, w)
+
+    def seg(a, b, k):
+        return a + (np.arange(k) / k)[:, None] * (b - a)
+
+    def arc(c, a0, a1, k):
+        t = a0 + (a1 - a0) * np.arange(k) / k
+        return np.column_stack([c[0] + w * np.cos(t), c[1] + w * np.sin(t)])
+
     a0 = math.atan2(nlow[1], nlow[0])
     right = np.vstack([
-        arc(np.array([0.0, vS]), -math.pi / 2, 0.0),
-        line(np.array([w, vS]), P1),
-        line(P1, R + w * nlow),
-        arc(R, a0, a0 + math.pi),
-        line(R - w * nlow, notch),
+        arc(np.array([0.0, vS]), -math.pi / 2, 0.0, c_bot),
+        seg(np.array([w, vS]), P1, c_stem),
+        seg(P1, R + w * nlow, c_arm),
+        arc(R, a0 + math.pi / (2 * c_tip), a0 + math.pi, c_tip),
+        seg(R - w * nlow, notch, c_arm),
     ])
-    left = right[::-1].copy()
+    left = right[1:][::-1].copy()
     left[:, 0] *= -1
-    dense = np.vstack([right, notch[None], left[1:-1]])
-    return resample_closed(dense, n, start=(0.0, vS - w))
+    return np.vstack([right, notch[None], left])
+
+
+def bspline_eval(ctrl, t):
+    """B-spline cubique uniforme fermée évaluée aux paramètres t (dans [0, n))."""
+    c = np.asarray(ctrl, float)
+    n = len(c)
+    i = np.floor(t).astype(int)
+    u = (t - i)[:, None]
+    b0 = (1 - u) ** 3 / 6
+    b1 = (3 * u**3 - 6 * u**2 + 4) / 6
+    b2 = (-3 * u**3 + 3 * u**2 + 3 * u + 1) / 6
+    b3 = u**3 / 6
+    return b0 * c[(i - 1) % n] + b1 * c[i % n] + b2 * c[(i + 1) % n] + b3 * c[(i + 2) % n]
+
+
+@functools.lru_cache(maxsize=8)
+def vulva_params(ctrl, n):
+    """Paramètres B-spline de n points équidistants sur la forme de base, départ à la pointe."""
+    m = len(ctrl)
+    t = np.linspace(0, m, m * 400, endpoint=False)
+    pts = bspline_eval(ctrl, t)
+    i0 = int(np.argmin(pts[:, 1]))
+    t = np.concatenate([t[i0:], t[:i0] + m, [t[i0] + m]])
+    pts = bspline_eval(ctrl, t % m)
+    cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+    return np.interp(np.linspace(0, cum[-1], n, endpoint=False), cum, t) % m
 
 
 def vulva_outline(P):
-    ctrl = np.asarray(P["vulva_ctrl"]) * P["vulva_scale"]
-    dense = closed_bspline(ctrl)
-    bottom = dense[np.argmin(dense[:, 1])]
-    return resample_closed(dense, P["N"], start=bottom)
+    base = tuple(map(tuple, P["vulva_ctrl"]))
+    ctrl = np.array(base)
+    tip = P["tip"]
+    ctrl[0, 1] -= 0.014 * tip                    # pointe plus basse (+) ou remontée (-)
+    for k in (1, -1):                            # flancs bas resserrés (+) ou élargis (-)
+        ctrl[k, 0] *= 1 - 0.22 * tip
+        ctrl[k, 1] -= 0.006 * tip
+    return bspline_eval(ctrl * P["vulva_scale"], vulva_params(base, P["N"]))
 
 
 # --------------------------------------------------------------------------- profils
@@ -104,10 +190,16 @@ def face_depth(P, uv):
     return P["Df"] * (1 - (1 - rho ** P["m"]) ** (1 / P["m"]))
 
 
-def canal_radius(P, x):
-    keys = P["canal_keys"]
-    xs = np.array([k[0] for k in keys])
-    rs = np.array([k[1] for k in keys])
+def canal_profile(P):
+    """Profil (profondeurs, rayons) du canal après les réglages anneau / chambre."""
+    xs = np.array([k[0] for k in P["canal_keys"]])
+    rs = np.array([k[1] + (P[CANAL_ROLES[k[2]][0]] * CANAL_ROLES[k[2]][1] if k[2] else 0.0)
+                   for k in P["canal_keys"]])
+    return xs, rs
+
+
+def canal_radius(profile, x):
+    xs, rs = profile
     x = np.atleast_1d(x)
     out = np.empty_like(x, dtype=float)
     for i, xi in enumerate(x):
@@ -165,16 +257,24 @@ def build(P=None, **overrides):
     A, B, m = P["A"], P["B"], P["m"]
     rm = RingMesh(N)
 
-    slit = y_slit_outline(P["slit_vS"], P["slit_vJ"], P["slit_ua"], P["slit_va"], P["slit_w"], N)
+    base_slit = (P["slit_vS"], P["slit_vJ"], P["slit_ua"], P["slit_va"], P["slit_w"])
+    counts = slit_counts(*base_slit, N)
+    v_c = 0.5 * (P["slit_vS"] + P["slit_vJ"])          # axe du canal (fixe pour toutes les shape keys)
+    slit = y_slit_outline(P["slit_vS"] - 0.006 * P["tip"], P["slit_vJ"], P["slit_ua"] * P["arm_len"],
+                          P["slit_va"] * P["arm_len"], P["slit_w"], counts)
     tri = vulva_outline(P)
-    v_c = 0.5 * (P["slit_vS"] + P["slit_vJ"])          # axe du canal
+    slit_unscaled = slit.copy()
+    center = np.array([0.0, v_c])
+    slit = center + P["vulva_size"] * (slit - center)
+    tri = center + P["vulva_size"] * (tri - center)
     d_slit = face_depth(P, slit)
+    profile = canal_profile(P)
     th = -math.pi / 2 + 2 * math.pi * np.arange(N) / N  # angle des anneaux circulaires
 
     # ---- canal : on le construit de la fente vers le fond, puis on inverse
     canal = []  # (pts3d, tag, vulve, interieur)
     xv = P["vest_depth"]
-    r_v = canal_radius(P, xv)[0]
+    r_v = canal_radius(profile, xv)[0]
     circ_v = circle(r_v, N, (0.0, v_c))
     for j in range(1, P["M_vest"] + 1):
         t = j / P["M_vest"]
@@ -183,16 +283,16 @@ def build(P=None, **overrides):
         d = d_slit + xv * t
         canal.append((np.column_stack([uv, d]), "vestibule", 1.0, 1.0))
 
-    x_end = P["canal_keys"][-1][0]
+    x_end = profile[0][-1]
     xs = np.arange(xv + P["canal_step"], x_end + 1e-9, P["canal_step"])
     for x in xs:
-        r = canal_radius(P, x)[0]
+        r = canal_radius(profile, x)[0]
         mask = float(smoothstep((x - 0.032) / 0.010) * smoothstep((x_end + 0.004 - x) / 0.012))
         rr = np.maximum(r - mask * canal_relief(P["canal_variant"], x, th), 0.002)
         uv = np.column_stack([rr * np.cos(th), v_c + rr * np.sin(th)])
         canal.append((np.column_stack([uv, np.full(N, x)]), "canal", 0.0, 1.0))
 
-    r_end = canal_radius(P, x_end)[0]
+    r_end = canal_radius(profile, x_end)[0]
     alphas = np.linspace(0, 0.38 * math.pi, P["end_n"] + 1)[1:]
     for a in alphas:
         r = r_end * math.cos(a)
@@ -210,7 +310,7 @@ def build(P=None, **overrides):
     dist = np.linalg.norm(tri - slit, axis=1)
     v_mid = 0.5 * (P["slit_vS"] + P["slit_vJ"] + P["slit_va"])
     half = 0.5 * (P["slit_vJ"] + P["slit_va"] - P["slit_vS"])
-    dome = 1.0 + P["lip_dome"] * (1.0 - np.clip(((slit[:, 1] - v_mid) / half) ** 2, 0, 1)) - P["lip_dome"] * 0.5
+    dome = 1.0 + P["lip_dome"] * (1.0 - np.clip(((slit_unscaled[:, 1] - v_mid) / half) ** 2, 0, 1)) - P["lip_dome"] * 0.5
     H = smooth_periodic(P["lip_h"] * dist * dome, window=7, passes=2)
     k_from_bottom = np.minimum(np.arange(N), N - np.arange(N))
     fold_mask = np.exp(-(k_from_bottom / P["fold_span"]) ** 2)
