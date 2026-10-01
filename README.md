@@ -22,7 +22,7 @@ s'ouvrent dans Blender 4.3.x. Les rendus utilisent Cycles en CPU, sans interface
 | `lib/materials.py` | Matériau latex réglable (groupe de nœuds `Latex_Reglages`) |
 | `lib/studio.py` | Scène, lumières, caméras, rendu, contrôle qualité du maillage |
 | `lib/nodes.py` | Construction d'arbres Geometry Nodes depuis Python |
-| `poche_canine/` | Vagin de poche à vulve canine stylisée (anthro/furry) et sa scène de test |
+| `poche_canine/` | Vagin de poche à vulve canine stylisée (anthro/furry), ses variantes (`variantes.py`) et sa scène de test |
 | `jouets/` | Jouets de test procéduraux en Geometry Nodes (`build.py` : fichier des jouets seuls) |
 | `deformation/` | Test d'insertion en Geometry Nodes (déformation instantanée) |
 | `lib/uv.py`, `lib/bake.py` | Coutures et dépliage UV, cuisson de textures (Cycles) |
@@ -107,6 +107,90 @@ Le même matériau sert aux jouets (chacun a son propre matériau, donc ses prop
 | `09b` | Profil, lèvres gonflées |
 | `10` | Planche des réglages de la vulve |
 | `11` | Planche des réglages de l'anneau d'entrée et de la chambre |
+
+## Variantes du vagin de poche
+
+```bash
+~/.venv-blender/bin/python poche_canine/build_variantes.py                  # 4 .blend + planche 50
+~/.venv-blender/bin/python poche_canine/build_variantes.py --only=Poche_Oeuf_Bulbe --no-render
+~/.venv-blender/bin/python poche_canine/build_textures.py --variante=Poche_Oeuf_Bulbe --res=4096
+```
+
+| Variante (`output/poche_canine/variantes/`) | Forme | Entrée | Shape keys |
+| --- | --- | --- | --- |
+| `Poche_Oeuf_Bulbe` | Œuf, 12,4 x 13,6 x 23,5 cm | Vulve en bulbe à 3 lobes, sombre | 18 |
+| `Poche_Sablier_Coeur` | Sablier, 11,6 x 13,6 x 24 cm | Vulve en cœur charnu, Y entrouvert | 20 |
+| `Poche_Fessier_Double` | Mini fessier, 17,6 x 17,6 x 20 cm | Petite fente + anus, deux canaux | 33 |
+| `Poche_Sablier_Anus` | Sablier | Anus seul | 13 |
+
+Toutes les variantes gardent les principes du modèle d'origine : 100 % quads, maillage
+fermé, topologie fixe pour les shape keys, UV, masques, matériau latex réglable.
+
+### Formes extérieures (`FORMES` dans `poche_canine/variantes.py`)
+
+- **Œuf :** face avant en dôme, la plus large près de l'avant, arrière effilé et long.
+- **Sablier :** taille resserrée à 83 % vers le milieu pour la prise en main, bouts renflés.
+- **Mini fessier :** deux fesses rondes séparées par un sillon arrondi.
+  - La face s'aplanit sous l'anus pour qu'il ne soit pas plié par le sillon.
+  - La vulve est en bas, entre le bas des fesses, et l'anus au-dessus, dans le sillon.
+
+### Styles de lèvres (`LEVRES`)
+
+- **Bulbe à 3 lobes :** vulve ronde et très saillante. Les branches du Y vont presque
+  jusqu'au bord et découpent trois coussinets. La teinte est sombre par défaut.
+- **Cœur charnu :** contour en cœur, avec un creux en haut et une pointe en bas, et des
+  lèvres épaisses.
+  - Le Y est entrouvert à la jonction et laisse voir l'intérieur rose.
+  - Shape keys `Fente_Ouverte` et `Fente_Fermee`.
+- **Petite fente :** vulve ovale plus petite et plus plate, fente entrouverte en
+  lentille, petits plis à la pointe basse. Shape keys `Fente_Ouverte` et `Fente_Fermee`.
+- **Classique :** le style du modèle d'origine.
+
+Les shape keys de la vulve (`Vulve_*`, `Levres_*`, `Fente_Branches_*`, `Pointe_*`) et du
+canal (`Anneau_*`, `Chambre_*`, `Canal_*`) existent sur toutes les variantes à vulve.
+Elles sont relatives au style : `Levres_Gonflees` multiplie la hauteur des lèvres par 1,3.
+
+### Anus
+
+- **Forme de base :** anneau gonflé, avec un cratère autour d'une petite ouverture et un
+  bourrelet rond à mi-rayon.
+- **`Anus_Plisse` :** passe à l'anus plissé en étoile, en losange vertical avec 10 plis
+  rayonnants. La topologie ne change pas, donc on peut mélanger les deux formes.
+- **Autres shape keys :**
+  - `Anus_Gonfle` : bourrelet plus haut et plus large ;
+  - `Anus_Ouvert` : ouverture entrouverte ;
+  - `Anus_Anneau_Serre` et `Anus_Anneau_Large` : anneau d'entrée ;
+  - `Anus_Chambre_Large` et `Anus_Chambre_Fine` : chambre du nœud ;
+  - `Anus_Canal_*` : mêmes 6 variantes de canal que le vagin.
+- **Canal anal :** plus étroit que le vagin, avec un anneau d'entrée serré et une
+  chambre qui retient aussi un nœud.
+  - Anus seul : 15,7 cm.
+  - Double entrée : 14,3 cm.
+
+### Double entrée (mini fessier)
+
+- **Construction :** trois maillages en anneaux, fusionnés sans triangle : la région de
+  la vulve, celle de l'anus et le corps.
+- **Bords communs :** les deux régions partagent un bord horizontal entre les deux
+  entrées. Ces bords sont fixés par la forme de base, donc toutes les shape keys restent
+  compatibles.
+- **Canaux :** deux canaux parallèles et séparés. Celui du vagin fait 18,9 cm, celui de
+  l'anus 14,3 cm, avec son axe 7,2 cm au-dessus de celui du vagin.
+
+### Créer une autre combinaison
+
+`parametres(forme, levres, anus)` dans `poche_canine/variantes.py` donne les paramètres
+et les shape keys de n'importe quelle combinaison :
+- `forme` : `cylindre`, `oeuf`, `sablier` ou `fessier` ;
+- `levres` : `classique`, `bulbe`, `coeur` ou `fente` ;
+- `anus` : `None`, `"seul"` ou `"double"`.
+
+Pour l'ajouter aux fichiers générés, il suffit d'ajouter une entrée à `VARIANTES` (avec
+les couleurs de son matériau). Le mini fessier n'existe qu'en double entrée.
+
+### Aperçus (`output/poche_canine/50_variantes.png`)
+
+Quatre vues rapides par variante (face, trois-quarts, profil, coupe), en latex opaque.
 
 ## Jouets de test (`jouets/`)
 
@@ -354,7 +438,8 @@ empaquetage, avec 71 % d'occupation.
 ## Export Unity 6 URP (`output/unity/`)
 
 ```bash
-~/.venv-blender/bin/python unity/export_fbx.py                       # les 4 FBX
+~/.venv-blender/bin/python unity/export_fbx.py                       # tous les FBX
+~/.venv-blender/bin/python unity/export_fbx.py --only=Poche_Fessier_Double
 ~/.venv-blender/bin/python unity/export_fbx.py --only=noue --subdiv-jouets=1
 ```
 
@@ -366,6 +451,10 @@ empaquetage, avec 71 % d'occupation.
 | `Jouet_Lisse.fbx` | 47 042 (subdivision 1) | `Epais`, `Fin`, `Long`, `Court` |
 | `Jouet_Perles.fbx` | 47 042 (subdivision 1) | `Perles_Grosses`, `Perles_Petites`, `Ecarts_Grands`, `Perles_Allongees`, `Tige_Epaisse` |
 | `Jouet_Noue.fbx` | 51 042 (gabarit déjà dense) | `Veines`, `Noeud_Gros`, `Noeud_Petit`, `Gland_Gros`, `Epais`, `Fin`, `Long`, `Court` |
+| `Poche_Oeuf_Bulbe.fbx` | 84 098 (subdivision 1) | 18 |
+| `Poche_Sablier_Coeur.fbx` | 85 634 (subdivision 1) | 20 |
+| `Poche_Fessier_Double.fbx` | 143 958 (subdivision 1) | 33 (vulve, canal, anus, canal anal) |
+| `Poche_Sablier_Anus.fbx` | 74 114 (subdivision 1) | 13 (anus, canal anal) |
 
 - **Objets figés :** les modificateurs (Geometry Nodes, Subdivision) sont appliqués, et
   chaque blend shape est recalculée à travers eux.
@@ -379,6 +468,8 @@ empaquetage, avec 71 % d'occupation.
 - **Repère :** mètres, Y en haut, rotation et échelle déjà appliquées.
   - Poche : pivot au centre de l'entrée du canal. La vulve regarde +Z (l'avant de
     l'objet), et le canal s'enfonce vers -Z sur 18,8 cm.
+  - Variantes : même repère. En double entrée, le pivot est à l'entrée du vagin, et
+    l'axe de l'anus est 7,2 cm au-dessus (+Y).
   - Jouets : pivot au centre de la base, pointe vers +Y.
 
 ### Import dans Unity (onglet Model de l'inspecteur)
