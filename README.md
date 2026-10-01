@@ -25,6 +25,8 @@ s'ouvrent dans Blender 4.3.x. Les rendus utilisent Cycles en CPU, sans interface
 | `poche_canine/` | Vagin de poche à vulve canine stylisée (anthro/furry) et sa scène de test |
 | `jouets/` | Jouets de test procéduraux en Geometry Nodes (`build.py` : fichier des jouets seuls) |
 | `deformation/` | Test d'insertion en Geometry Nodes (déformation instantanée) |
+| `lib/uv.py`, `lib/bake.py` | Coutures et dépliage UV, cuisson de textures (Cycles) |
+| `unity/` | Export FBX pour Unity 6 URP |
 | `output/` | Fichiers `.blend` et rendus générés |
 
 ## Vagin de poche (`poche_canine/`)
@@ -139,7 +141,8 @@ anneaux le long de l'axe, puis chaque sommet reçoit un rayon selon son angle
   le gland et le nœud, sans toucher au sillon de l'urètre.
 - **Fonctionnement :** la shape key décale le gabarit de +1 en X, et le générateur
   lit ce décalage comme intensité.
-- **Unity :** à l'export, le jouet sera figé avec une vraie blend shape `Veines`.
+- **Unity :** à l'export, le jouet est figé avec une vraie blend shape `Veines`
+  (voir « Export Unity 6 URP »).
 
 ```bash
 ~/.venv-blender/bin/python jouets/build.py     # output/jouets/jouets.blend + vues du jouet noué
@@ -348,6 +351,82 @@ empaquetage, avec 71 % d'occupation.
 | `42` | Rendus avec les textures cuites, et gros plan des plis |
 | `43` | Aperçu des 4 cartes |
 
+## Export Unity 6 URP (`output/unity/`)
+
+```bash
+~/.venv-blender/bin/python unity/export_fbx.py                       # les 4 FBX
+~/.venv-blender/bin/python unity/export_fbx.py --only=noue --subdiv-jouets=1
+```
+
+### Fichiers
+
+| FBX | Sommets | Blend shapes |
+| --- | --- | --- |
+| `Poche_Canine.fbx` | 85 634 (subdivision 1) | Les 18 shape keys de la poche |
+| `Jouet_Lisse.fbx` | 47 042 (subdivision 1) | `Epais`, `Fin`, `Long`, `Court` |
+| `Jouet_Perles.fbx` | 47 042 (subdivision 1) | `Perles_Grosses`, `Perles_Petites`, `Ecarts_Grands`, `Perles_Allongees`, `Tige_Epaisse` |
+| `Jouet_Noue.fbx` | 51 042 (gabarit déjà dense) | `Veines`, `Noeud_Gros`, `Noeud_Petit`, `Gland_Gros`, `Epais`, `Fin`, `Long`, `Court` |
+
+- **Objets figés :** les modificateurs (Geometry Nodes, Subdivision) sont appliqués, et
+  chaque blend shape est recalculée à travers eux.
+- **Réglages des jouets :** les réglages du générateur deviennent des blend shapes, car
+  la topologie du gabarit ne change jamais. À 0 % et à 100 %, la forme est exacte. Entre
+  les deux, Unity interpole en ligne droite : l'écart avec le vrai réglage est inférieur à
+  1 mm en moyenne, et va jusqu'à 4,6 mm sur le nœud à 50 %.
+- **Ajouter un réglage :** compléter `VARIANTES_JOUETS` dans `unity/export_fbx.py`.
+- **Contenu :** UV `UVMap` dans tous les FBX. La poche a en plus les couleurs de
+  sommets `Masques` (R = vulve, G = intérieur, en linéaire).
+- **Repère :** mètres, Y en haut, rotation et échelle déjà appliquées.
+  - Poche : pivot au centre de l'entrée du canal. La vulve regarde +Z (l'avant de
+    l'objet), et le canal s'enfonce vers -Z sur 18,8 cm.
+  - Jouets : pivot au centre de la base, pointe vers +Y.
+
+### Import dans Unity (onglet Model de l'inspecteur)
+
+- **Scale Factor :** 1, avec *Convert Units* coché. *Bake Axis Conversion* est inutile.
+- **Import BlendShapes :** coché.
+- **Normals :** *Import*.
+- **Blend Shape Normals :** *Calculate*. Le FBX ne contient pas de normales de blend
+  shapes. Si Unity ne propose pas *Calculate* avec *Normals: Import*, passer *Normals*
+  en *Calculate* avec un *Smoothing Angle* de 180.
+- **Tangents :** *Calculate Mikktspace*.
+- **Mesh Compression :** *Off*.
+- **Index Format :** *Auto*. Il passe en 32 bits pour plus de 65 535 sommets.
+- **Read/Write :** à cocher seulement si un script déforme le maillage.
+- **Blend shapes :** se règlent dans le *SkinnedMeshRenderer* (0 à 100), ou par script
+  avec `SetBlendShapeWeight`.
+  - Les paires opposées sont à utiliser une à la fois (`Vulve_Grande` / `Vulve_Petite`).
+  - Un seul `Canal_*` à la fois : les mélanges `Canal_Anneaux_Picots` et
+    `Canal_Nervures_Plis` sont déjà fournis.
+
+### Textures de la poche (`output/poche_canine/textures/`)
+
+**Max Size :** à mettre à 4096 ou 8192. Le défaut de Unity (2048) réduirait les cartes.
+
+| Carte | Réglages d'import | Matériau URP Lit |
+| --- | --- | --- |
+| `BaseColor` | *Default*, sRGB coché | *Base Map* |
+| `Normal` | *Normal map* (convention OpenGL, comme Unity) | *Normal Map* |
+| `AO` | *Default*, sRGB décoché | *Occlusion Map* (force 0,3 à 0,6 si transparent) |
+| `Masques` | *Default*, sRGB décoché | Non utilisée par URP Lit (prévue pour un shader sur mesure) |
+
+### Matériaux URP
+
+- **Poche, shader *Universal Render Pipeline/Lit* :**
+  - *Surface Type* : Transparent, *Blending Mode* : Alpha, *Preserve Specular Lighting* coché ;
+  - *Render Face* : Front ;
+  - couleur de la Base Map : blanc, alpha 0,3 à 0,5 pour la transparence (1 = opaque) ;
+  - *Metallic* : 0, *Smoothness* : 0,85 pour le reflet.
+- **Reflet plus marqué :** le shader *Complex Lit* ajoute un *Clear Coat*, comme le
+  vernis du matériau Blender.
+- **Jouets :** *Lit* opaque, avec la couleur du jouet et une *Smoothness* de 0,8.
+- **Limite de URP Lit :** les teintes de la vulve et de l'intérieur sont cuites dans la
+  BaseColor. Pour les régler à part dans Unity, il faudra un shader sur mesure qui lit
+  les `Masques`.
+
 ## À venir
 
-- Export FBX pour Unity 6 URP (poche et jouets figés, shape keys en blend shapes, matériaux URP).
+- Shader URP sur mesure : couleur, transparence, reflet, teintes de la vulve et de
+  l'intérieur réglables à part (avec les `Masques`).
+- Déformation à l'insertion dans Unity.
+- Version torse (onahole) de la poche.
