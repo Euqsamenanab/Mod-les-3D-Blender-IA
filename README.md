@@ -197,7 +197,57 @@ frottement ni de retenue du nœud. La simulation physique est l'étape suivante.
 | `25` | Butée au fond : jouet rigide ou souple, latex souple ou ferme |
 | `26` | Jouet noué inséré, latex transparent |
 
+## Simulation physique
+
+```bash
+~/.venv-blender/bin/python poche_canine/build_physique.py            # test_physique.blend + rendus 30, 31 + GIF
+~/.venv-blender/bin/python poche_canine/build_physique.py --no-render
+```
+
+Dans `output/poche_canine/test_physique.blend` : lancer l'animation (images 1 à 260 :
+entrée, butée au fond, maintien, retrait) ou cuire la simulation (Physique > Cloth >
+Cache > Bake sur `Poche_Proxy`).
+
+**Fonctionnement (hybride, stable et propre) :**
+- **Collision pure, écartée :** un Cloth classique qui heurte le jouet donne des parois
+  froissées et traversées, quand un canal de 15 mm doit s'ouvrir à 42 mm à partir
+  d'une fente fermée.
+- **Poche_Proxy (masquée, environ 4 200 sommets) :**
+  - le modificateur `Cible` calcule la forme propre de la déformation, avec le même
+    modèle que le test Geometry Nodes, à partir de la vraie position animée du jouet ;
+  - le `Cloth` en mode *Dynamic Mesh* suit cette cible avec l'inertie, le retard et les
+    ondulations du latex ;
+  - le rappel vers la cible (groupe `Maintien`) est faible dans le canal et les lèvres,
+    et fort sur la surface extérieure tenue en main. Il n'y a pas de gravité.
+- **Poche_Canine :** la poche détaillée suit le proxy (Surface Deform), puis la
+  subdivision et la vue en coupe s'appliquent.
+- **Jouets :** animés le long de l'axe. Le modificateur `Cible_Jouet` les tasse et les
+  fléchit selon les rigidités. Il est calculé contre `Poche_Repos`, copie figée de la
+  poche, pour éviter les dépendances circulaires.
+
+**Réglages (objet `Reglages_Physique`, propriétés personnalisées) :**
+
+| Propriété | Effet |
+| --- | --- |
+| Rigidité latex | Raideur du Cloth et rappel vers la cible (0 : latex très souple, qui ondule et traîne ; 1 : ferme), diffusion de la déformation |
+| Rigidité jouet | 0 : jouet très souple, qui se tasse et fléchit en butée ; 1 : rigide |
+| Flexion | Part du tassement d'un jouet souple absorbée en flexion |
+
+**Changer de jouet :**
+1. Dans le modificateur `Cible` de `Poche_Proxy`, choisir le jouet.
+2. Afficher ce jouet et masquer les autres.
+3. Relancer la simulation.
+
+**Après une modification des shape keys de la poche :** refaire la liaison
+(`Suivi_Simulation` > Unbind puis Bind, à l'image 1), puis relancer la simulation.
+Le proxy garde la forme de base : régénérer avec le script pour un proxy adapté.
+
+| Fichier | Contenu |
+| --- | --- |
+| `30` | Séquence avec le jouet noué (entrée, nœud, butée, retrait), en coupe |
+| `31` | Rigidités : latex souple, latex ferme, jouet souple, jouet rigide |
+| `physique_noue.gif` | Animation de la séquence |
+
 ## À venir
 
-- Test de déformation en simulation physique, avec rigidité réglable du latex et des jouets.
 - UV propres, puis textures 4K/8K (masques de couleur, normal map des petits plis), export FBX pour Unity.
