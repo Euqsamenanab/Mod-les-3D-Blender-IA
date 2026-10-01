@@ -40,7 +40,7 @@ Les dimensions et formes sont dans `PARAMS` (`poche_canine/sleeve.py`).
 - Uniquement des quads, maillage fermé, normales cohérentes. Le contrôle qualité est affiché à chaque build.
 - Topologie en anneaux concentriques autour de la fente, puis anneaux réguliers le long du canal (pas de 1,25 mm), pour une déformation propre.
 - Subdivision Surface : niveau 1 dans la vue, niveau 2 au rendu.
-- Dimensions : 11 × 13 × 24 cm ; vulve d'environ 5,6 × 7 cm ; canal d'environ 19 cm.
+- Dimensions : 11 × 13 × 24 cm ; vulve de 5,7 × 7,3 cm, en saillie de 2 cm ; canal de 18,8 cm.
 - Canal de verrouillage : vestibule sous la fente, anneau d'entrée étroit (Ø 11 mm au repos), chambre du nœud (Ø 26 mm, 3–9 cm de profondeur), canal (Ø 15 mm), fond arrondi.
 
 ### Shape keys
