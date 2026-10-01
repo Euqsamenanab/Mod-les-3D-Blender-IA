@@ -49,12 +49,30 @@ def main():
         ("Trois-quarts dessous", (-0.40, 0.38, zc + 0.08), (0, 0, zc)),
         ("Trois-quarts dessus", (0.38, -0.40, zc + 0.16), (0, 0, zc)),
     ]
+    veines = noue.data.shape_keys.key_blocks["Veines"]
+    veines.value = 0.0
     tiles, labels = [], []
     for i, (label, loc, target) in enumerate(vues):
         cam = studio.camera(f"Cam_{i}", loc, target, 50)
         tiles.append(studio.render(scene, os.path.join(OUT, f"_tile_{i}.png"), cam))
         labels.append(label)
     studio.contact_sheet(tiles, labels, os.path.join(OUT, "jouet_noue_vues.png"), cols=4)
+
+    # shape key « Veines » : 0, 1 et gros plan
+    tiles, labels = [], []
+    plans = [
+        ("Veines 0", 0.0, (-0.40, -0.30, zc + 0.10), (0, 0, zc + 0.02), 50),
+        ("Veines 1", 1.0, (-0.40, -0.30, zc + 0.10), (0, 0, zc + 0.02), 50),
+        ("Veines 1 (dessus)", 1.0, (0.30, -0.40, zc + 0.12), (0, 0, zc + 0.02), 50),
+        ("Veines 1 (gros plan)", 1.0, (-0.12, -0.10, zc + 0.03), (0, 0, zc), 60),
+    ]
+    for i, (label, val, loc, target, lens) in enumerate(plans):
+        veines.value = val
+        cam = studio.camera(f"Cam_V{i}", loc, target, lens)
+        tiles.append(studio.render(scene, os.path.join(OUT, f"_tile_v{i}.png"), cam))
+        labels.append(label)
+    studio.contact_sheet(tiles, labels, os.path.join(OUT, "jouet_noue_veines.png"), cols=4)
+    veines.value = 0.0
 
 
 main()

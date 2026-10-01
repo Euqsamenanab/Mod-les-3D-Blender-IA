@@ -12,6 +12,11 @@ répartir les anneaux le long de l'axe ; le rayon final de chaque sommet est
 recalculé selon son angle `theta` (sillon de l'urètre, nœud en deux lobes).
 Le dessous du jouet (côté urètre) est le côté +Y local.
 
+Veines (jouet noué) : la shape key « Veines » du gabarit décale chaque sommet de
++1 en X. Le générateur lit ce décalage (position - x_repos) comme intensité des
+veines : le curseur de la shape key règle donc en direct le relief des veines,
+dont la forme se règle dans le modificateur.
+
 Repère du jouet : axe = Z local, base à z = 0, pointe en haut.
 w = distance depuis la pointe (w = 0 à la pointe, w = L à la base).
 """
@@ -135,6 +140,54 @@ def profil_noue(nb, g):
     def enveloppe(w):
         return _finalise(nb, [corps(w), nb.ellipsoid(w, La, nb.add(d, rl), Ll)] + autres(w), k)
 
+    def veines(w, th):
+        """Relief des veines (m) : 5 veines sinueuses sur le dessus et les flancs, 2 ramifications."""
+        graine = g["Veines : graine"]
+
+        def alea(kv, j):
+            v = nb.sin(nb.add(nb.mul(graine, 12.9898), 78.233 * kv + 37.719 * j))
+            return nb.math("FRACT", nb.mul(v, 43758.5453))
+
+        sin_ = g["Veines : sinuosité"]
+        demi0 = nb.div(nb.mul(g["Veines : épaisseur"], 0.5), r2)   # demi-largeur angulaire
+        total = 0.0
+        chemins = {}
+        for kv, base in enumerate((-1.57, -0.75, -2.39, 0.15, 2.99)):
+            th0 = nb.add(base, nb.mul(0.25, nb.sub(alea(kv, 1), 0.5)))
+            lam = nb.add(0.06, nb.mul(0.05, alea(kv, 2)))
+            phi = nb.mul(2 * math.pi, alea(kv, 3))
+            onde = nb.add(nb.sin(nb.add(nb.div(nb.mul(w, 2 * math.pi), lam), phi)),
+                          nb.mul(0.4, nb.sin(nb.add(nb.div(nb.mul(w, 2 * math.pi), nb.mul(lam, 0.43)),
+                                                    nb.mul(phi, 2.0)))))
+            th_k = nb.add(th0, nb.mul(sin_, onde))
+            w0 = nb.add(nb.mul(Lg, 1.05), nb.mul(0.015, alea(kv, 4)))
+            w1 = nb.sub(nb.sub(La, nb.mul(Ll, 0.85)), nb.mul(0.012, alea(kv, 5)))
+            env = nb.mul(nb.smoothstep(w0, nb.add(w0, 0.018), w),
+                         nb.sub(1.0, nb.smoothstep(nb.sub(w1, 0.018), w1, w)))
+            x = nb.clamp01(nb.div(nb.sub(w, w0), nb.max(nb.sub(w1, w0), 1e-3)))
+            haut = nb.mul(nb.mul(g["Veines : relief"], nb.add(0.65, nb.mul(0.35, alea(kv, 6)))),
+                          nb.add(0.6, nb.mul(0.4, x)))
+            sigma = nb.mul(demi0, nb.add(0.65, nb.mul(0.35, x)))
+            chemins[kv] = (th_k, env, haut, sigma, w0, w1)
+
+        def trace(th_k, env, haut, sigma, index):
+            actif = nb.gt(g["Veines : nombre"], index - 0.5)
+            # profil de tube : 1 - (corde / demi-largeur)², corde² = 2 (1 - cos(écart angulaire))
+            corde2 = nb.mul(2.0, nb.sub(1.0, nb.cos(nb.sub(th, th_k))))
+            profil = nb.pow(nb.max(0.0, nb.sub(1.0, nb.div(corde2, nb.mul(sigma, sigma)))), 0.75)
+            return nb.mul(nb.mul(actif, haut), nb.mul(env, profil))
+
+        for kv, (th_k, env, haut, sigma, _, _) in chemins.items():
+            total = nb.add(total, trace(th_k, env, haut, sigma, kv + 1))
+        # ramifications vers le gland, depuis les veines 2 et 3
+        for idx, (parent, ecart) in enumerate(((1, 0.5), (2, -0.5)), start=6):
+            th_p, env_p, haut_p, sigma_p, w0, w1 = chemins[parent]
+            wb = nb.add(w0, nb.mul(nb.sub(w1, w0), nb.add(0.5, nb.mul(0.15, alea(idx, 7)))))
+            th_b = nb.add(th_p, nb.mul(ecart, nb.smoothstep(0.0, 0.04, nb.sub(wb, w))))
+            env_b = nb.mul(env_p, nb.sub(1.0, nb.smoothstep(nb.sub(wb, 0.003), nb.add(wb, 0.003), w)))
+            total = nb.add(total, trace(th_b, env_b, nb.mul(haut_p, 0.75), nb.mul(sigma_p, 0.85), idx))
+        return total
+
     def rayon_3d(w, th):
         # sillon de l'urètre sur le dessous (+Y), bordé de deux bourrelets
         s0 = nb.sin(th)
@@ -150,6 +203,10 @@ def profil_noue(nb, g):
         masque = nb.mul(nb.smoothstep(nb.mul(ln, 2.0), nb.mul(Lg, 0.7), w),
                         nb.sub(1.0, nb.smoothstep(nb.sub(La, nb.mul(Ll, 1.2)), nb.sub(La, nb.mul(Ll, 0.5)), w)))
         corps3d = nb.mul(corps(w), nb.add(1.0, nb.mul(masque, nb.sub(mod, 1.0))))
+        # veines : intensité lue sur la shape key « Veines » du gabarit
+        px, _, _ = nb.xyz(nb.position())
+        intensite = nb.sub(px, nb.named("x_repos"))
+        corps3d = nb.add(corps3d, nb.mul(intensite, veines(w, th)))
         # nœud : deux lobes ellipsoïdaux centrés en x = ±d ; distance depuis l'axe dans la direction th
         q = nb.div(nb.sub(w, La), Ll)
         rho_c = nb.mul(rl, nb.sqrt(nb.max(0.0, nb.sub(1.0, nb.mul(q, q)))))
@@ -186,7 +243,8 @@ JOUETS = {
     "noue": dict(
         nom="Jouet_Noue",
         profil=profil_noue,
-        segments=96, anneaux=300,
+        segments=160, anneaux=300,
+        veines=True,
         entrees=[("Pointe → centre du nœud", "FLOAT", 0.155, 0.04, 0.4, D),
                  ("Diamètre pointe", "FLOAT", 0.006, 0.002, 0.04, D), ("Longueur pointe", "FLOAT", 0.013, 0.002, 0.05, D),
                  ("Diamètre gland", "FLOAT", 0.040, 0.005, 0.12, D), ("Longueur gland", "FLOAT", 0.060, 0.01, 0.15, D),
@@ -198,7 +256,10 @@ JOUETS = {
                  ("Longueur nœud", "FLOAT", 0.050, 0.01, 0.15, D),
                  ("Diamètre col", "FLOAT", 0.034, 0.005, 0.12, D), ("Longueur col", "FLOAT", 0.018, 0.0, 0.15, D),
                  ("Diamètre base", "FLOAT", 0.07, 0.0, 0.2, D), ("Hauteur base", "FLOAT", 0.014, 0.002, 0.05, D),
-                 ("Lissage", "FLOAT", 0.005, 0.0, 0.03, D)],
+                 ("Lissage", "FLOAT", 0.005, 0.0, 0.03, D),
+                 ("Veines : nombre", "INT", 7, 0, 7, None), ("Veines : épaisseur", "FLOAT", 0.0036, 0.001, 0.012, D),
+                 ("Veines : relief", "FLOAT", 0.0014, 0.0, 0.004, D),
+                 ("Veines : sinuosité", "FLOAT", 0.22, 0.0, 0.8, None), ("Veines : graine", "INT", 3, 0, 1000, None)],
     ),
 }
 
@@ -264,6 +325,16 @@ def creer_jouet(kind, material, location=(0, 0, 0), subdivision=(1, 2)):
     for name in ("t", "theta"):
         a = me.attributes.new(name, "FLOAT", "POINT")
         a.data.foreach_set("value", attrs[name].astype(np.float32))
+    if spec.get("veines"):
+        # x_repos + shape key « Veines » (+1 en X) : le générateur en déduit l'intensité des veines
+        a = me.attributes.new("x_repos", "FLOAT", "POINT")
+        a.data.foreach_set("value", verts[:, 0].astype(np.float32))
+        ob.shape_key_add(name="Basis", from_mix=False)
+        cle = ob.shape_key_add(name="Veines", from_mix=False)
+        co = verts.astype(np.float32).copy()
+        co[:, 0] += 1.0
+        cle.data.foreach_set("co", co.ravel())
+        cle.slider_min, cle.slider_max = 0.0, 2.0
     mod = ob.modifiers.new("Generateur", "NODES")
     mod.node_group = arbre_jouet(kind)
     if subdivision:

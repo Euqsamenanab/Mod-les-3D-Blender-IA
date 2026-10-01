@@ -125,7 +125,21 @@ canal, pour qu'il y ait une butée au fond.
 Le jouet noué (canin stylisé) n'est pas de révolution : le profil répartit les
 anneaux le long de l'axe, puis chaque sommet reçoit un rayon selon son angle
 (sillon de l'urètre sur le dessous, côté +Y local ; lobes du nœud de chaque côté,
-±X). Gabarit de 96 sommets par anneau pour garder le sillon net.
+±X). Gabarit de 160 sommets par anneau pour garder le sillon et les veines nets.
+
+**Veines du jouet noué :**
+- **Intensité :** shape key `Veines` (Propriétés > Données de l'objet > Shape Keys),
+  curseur de 0 (aucune veine) à 2 (relief doublé).
+- **Forme :** dans le modificateur `Generateur` :
+  - nombre de veines (jusqu'à 5 veines et 2 ramifications) ;
+  - épaisseur et relief ;
+  - sinuosité ;
+  - « graine », qui donne un autre tracé aléatoire.
+- **Placement :** les veines courent sur le dessus et les flancs de la tige, entre
+  le gland et le nœud, sans toucher au sillon de l'urètre.
+- **Fonctionnement :** la shape key décale le gabarit de +1 en X, et le générateur
+  lit ce décalage comme intensité.
+- **Unity :** à l'export, le jouet sera figé avec une vraie blend shape `Veines`.
 
 ```bash
 ~/.venv-blender/bin/python jouets/build.py     # output/jouets/jouets.blend + vues du jouet noué
