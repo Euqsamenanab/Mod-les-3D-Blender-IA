@@ -204,9 +204,46 @@ frottement ni de retenue du nœud. La simulation physique est l'étape suivante.
 ~/.venv-blender/bin/python poche_canine/build_physique.py --no-render
 ```
 
-Dans `output/poche_canine/test_physique.blend` : lancer l'animation (images 1 à 260 :
-entrée, butée au fond, maintien, retrait) ou cuire la simulation (Physique > Cloth >
-Cache > Bake sur `Poche_Proxy`).
+Dans `output/poche_canine/test_physique.blend`, l'animation fait un cycle de 11,3 s :
+entrée, butée au fond, maintien, retrait, retour au repos. Le fichier est généré à
+30 images par seconde.
+
+Options de génération :
+
+| Option | Effet |
+| --- | --- |
+| `--fps=24`, `30` ou `60` | Cadence ; la durée reste la même |
+| `--boucles=N` | N cycles enchaînés ; première et dernière image identiques, la vidéo boucle sans à-coup |
+| `--vitesse=2` | Mouvement deux fois plus rapide |
+
+### Rendu vidéo fluide (sur ton PC, avec GPU)
+
+La lecture directe dans la vue 3D n'est pas fluide : chaque image recalcule la
+simulation, les jouets procéduraux et la subdivision. Pour voir le résultat final,
+il faut cuire la simulation puis rendre une vidéo :
+
+1. Ouvrir `test_physique.blend`.
+2. Afficher `Poche_Proxy` dans l'Outliner, puis Propriétés > Physique > Cloth > Cache > **Bake**.
+   La cuisson prend environ 1 minute. Ensuite, la lecture dans la vue est déjà plus fluide.
+3. Moteur de rendu, au choix :
+   - **Cycles** : laisser Cycles et activer le GPU (Préférences > Système > Cycles Render
+     Devices : OptiX ou CUDA, ou HIP). Comptez quelques secondes par image en 1080p.
+   - **EEVEE** : environ 1 seconde par image ; activer *Raytracing* pour la transparence du latex.
+4. Choisir la caméra :
+   - `Cam_Exterieur` (active par défaut) : vue d'ensemble, latex transparent ;
+   - `Cam_Coupe` : vue du canal. Clic droit > *Set Active Camera*, puis cocher
+     « Vue en coupe » dans le modificateur `Vue_en_coupe` de `Poche_Canine` et mettre
+     Transparence à 0 dans le matériau `Latex_Poche`.
+5. Rendu > **Render Animation** (Ctrl+F12). La sortie est déjà réglée : MP4 H.264
+   1920 x 1080, dans le dossier `rendu/` à côté du `.blend`.
+
+Rendu sans interface (CPU, lent : environ 40 s par image en 720p) :
+
+```bash
+~/.venv-blender/bin/python poche_canine/build_physique.py --video --res=1920x1080 --samples=64
+~/.venv-blender/bin/python poche_canine/build_physique.py --video --png --res=1280x720 --debut=1 --fin=170   # par tranches
+~/.venv-blender/bin/python poche_canine/build_physique.py --assembler --res=1280x720                       # PNG -> MP4
+```
 
 **Fonctionnement (hybride, stable et propre) :**
 - **Collision pure, écartée :** un Cloth classique qui heurte le jouet donne des parois
