@@ -54,6 +54,11 @@ def _finalise(nb, termes, k):
     return nb.min(lisse, nb.mul(brut, 1.3))
 
 
+def _pointe(nb, w, rp, corps):
+    """Bout arrondi (demi-sphère de rayon rp) raccordé sans bourrelet au reste du corps."""
+    return nb.switch("FLOAT", nb.lt(w, rp), corps, nb.ellipsoid(w, rp, rp, rp))
+
+
 def profil_lisse(nb, g):
     L = g["Longueur"]
     rp, R, rb = (nb.mul(g[n], 0.5) for n in ("Diamètre pointe", "Diamètre", "Diamètre base"))
@@ -61,9 +66,9 @@ def profil_lisse(nb, g):
 
     def r(w):
         x = nb.clamp01(nb.div(nb.sub(w, rp), nb.sub(nb.sub(L, nb.mul(h, 2.0)), rp)))
-        tige = nb.mul(nb.lerp(rp, R, nb.pow(x, 0.6)), nb.between(w, rp, nb.sub(L, h)))
-        return _finalise(nb, [nb.ellipsoid(w, rp, rp, rp), tige, nb.ellipsoid(w, nb.sub(L, h), rb, h)],
-                         g["Lissage"])
+        tige = nb.mul(nb.lerp(rp, R, nb.pow(x, 0.6)), nb.between(w, 0.0, nb.sub(L, h)))
+        corps = _pointe(nb, w, rp, tige)
+        return _finalise(nb, [corps, nb.ellipsoid(w, nb.sub(L, h), rb, h)], g["Lissage"])
 
     return L, r
 
@@ -106,9 +111,9 @@ def profil_noue(nb, g):
         ogive = nb.lerp(rp, R, nb.pow(nb.sin(nb.mul(x1, math.pi / 2)), 0.85))
         x2 = nb.clamp01(nb.div(nb.sub(w, Lp), nb.max(nb.sub(nb.sub(La, demi_k), Lp), 1e-4)))
         renfle = nb.add(1.0, nb.mul(g["Renflement tige"], nb.sin(nb.mul(x2, math.pi))))
-        tige = nb.mul(nb.mul(ogive, renfle), nb.between(w, rp, La))
+        tige = nb.mul(nb.mul(ogive, renfle), nb.between(w, 0.0, La))
         col = nb.mul(rc, nb.between(w, La, nb.sub(L, h)))
-        termes = [nb.ellipsoid(w, rp, rp, rp), tige, nb.ellipsoid(w, La, rk, demi_k), col,
+        termes = [_pointe(nb, w, rp, tige), nb.ellipsoid(w, La, rk, demi_k), col,
                   nb.ellipsoid(w, nb.sub(L, h), rb, h)]
         return _finalise(nb, termes, g["Lissage"])
 

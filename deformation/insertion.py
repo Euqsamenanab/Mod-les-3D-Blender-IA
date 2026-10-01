@@ -7,7 +7,8 @@ Modèle de déformation (dans chaque direction radiale autour de l'axe du canal)
 - r_c : rayon du canal au repos (lancer de rayon depuis l'axe sur la poche),
   r_t : rayon du jouet (lancer de rayon depuis l'axe sur le jouet).
 - Là où r_t > r_c, poche et jouet se rencontrent au rayon de contact
-  r_f = r_c + a (r_t - r_c), avec a = k_jouet / (k_poche + k_jouet) d'après les rigidités.
+  r_f = r_c + a' (r_t - r_c). Les rigidités donnent a = k_jouet / (k_poche + k_jouet) ;
+  en rayon, un jouet plein étant quasi incompressible, a' = 1 - 0,35 (1 - a).
 - La poche se dilate à aire conservée (latex incompressible) :
   rho' = sqrt(rho² + r_f² - r_c²). La paroi du canal va exactement à r_f, la matière
   autour suit, la surface extérieure gonfle un peu, les lèvres s'écartent.
@@ -67,11 +68,13 @@ def arbre_insertion():
 
     kp, kj = k(g["Rigidité poche"]), k(g["Rigidité jouet"])
     a = nb.div(kj, nb.add(kp, kj))                         # part de la déformation prise par la poche
+    # en rayon, un jouet plein est quasi incompressible : il cède au plus 35 % du recouvrement
+    a_rad = nb.sub(1.0, nb.mul(0.35, nb.sub(1.0, a)))
     p = nb.max(0.0, nb.sub(ins, fond))                     # dépassement du fond du canal
     p_poche = nb.mul(a, p)
     p_jouet = nb.sub(p, p_poche)
     libre = nb.max(0.0, nb.sub(long_jouet, ins))           # longueur du jouet restée dehors
-    p_flex = nb.mul(nb.mul(g["Flexion"], p_jouet), nb.gt(libre, 0.005))
+    p_flex = nb.mul(nb.mul(g["Flexion"], p_jouet), nb.gt(libre, 0.03))   # flexion si >= 3 cm dehors
     p_comp = nb.sub(p_jouet, p_flex)
 
     # ------------------------------------------------------------ jouet placé dans l'axe
@@ -120,7 +123,7 @@ def arbre_insertion():
         _, dans_latex, rc = canal_au_repos(cible, C, d)
         rt = rayon_jouet(C, d)
         contact = nb.mul(nb.gt(rt, rc), nb.sub(1.0, dans_latex))
-        rf = nb.add(nb.add(rc, nb.mul(a, nb.sub(rt, rc))), JEU)
+        rf = nb.add(nb.add(rc, nb.mul(a_rad, nb.sub(rt, rc))), JEU)
         return nb.mul(contact, nb.sub(nb.mul(rf, rf), nb.mul(rc, rc)))
 
     def store(geo, name, value):
@@ -129,6 +132,15 @@ def arbre_insertion():
         n.inputs["Name"].default_value = name
         nb.set(n.inputs["Value"], value)
         return n.outputs["Geometry"]
+
+    # ------------------------------------------------------------ poche : fond repoussé
+    # d'abord la poussée axiale (le fond du canal recule devant la pointe), puis la
+    # dilatation radiale est calculée sur ce canal allongé
+    _, Py0, _, rho0, _ = radial()
+    w_ax = nb.mul(nb.mul(nb.smoothstep(nb.sub(fond, 0.03), fond, Py0),
+                         nb.sub(1.0, nb.clamp01(nb.div(nb.sub(Py0, fond), nb.max(nb.sub(arriere, fond), 0.01))))),
+                  nb.sub(1.0, nb.smoothstep(0.008, 0.045, rho0)))
+    poche = nb.set_position(poche, offset=nb.vec(0.0, nb.mul(nb.add(p_poche, nb.mul(nb.gt(p, 0.0), JEU)), w_ax), 0.0))
 
     # ------------------------------------------------------------ poche : dilatation diffusée
     poche_d = store(poche, "dilatation", dilatation(poche))
@@ -146,18 +158,13 @@ def arbre_insertion():
     P, Py, C, rho, d = radial()
     delta = nb.max(dilatation(poche_s), nb.named("dilatation"))
     rho_n = nb.sqrt(nb.add(nb.mul(rho, rho), delta))
-    w_ax = nb.mul(nb.mul(nb.smoothstep(nb.sub(fond, 0.03), fond, Py),
-                         nb.sub(1.0, nb.clamp01(nb.div(nb.sub(Py, fond), nb.max(nb.sub(arriere, fond), 0.01))))),
-                  nb.exp(nb.mul(-1.0, nb.pow(nb.div(rho, 0.035), 2.0))))
-    pos_poche = nb.vmath("ADD", nb.vmath("ADD", C, nb.vmath("SCALE", d, scale=rho_n)),
-                         nb.vec(0.0, nb.mul(p_poche, w_ax), 0.0))
-    poche_def = nb.set_position(poche_s, pos_poche)
+    poche_def = nb.set_position(poche_s, nb.vmath("ADD", C, nb.vmath("SCALE", d, scale=rho_n)))
 
     # ------------------------------------------------------------ jouet : compression radiale
     V, _, Cj, rho_j, dj = radial()
     hit, dans_latex, rc = canal_au_repos(poche_s, Cj, dj)
     contact = nb.mul(nb.mul(hit, nb.gt(rho_j, rc)), nb.sub(1.0, dans_latex))
-    rf = nb.add(rc, nb.mul(a, nb.sub(rho_j, rc)))
+    rf = nb.add(rc, nb.mul(a_rad, nb.sub(rho_j, rc)))
     cible = nb.vmath("ADD", Cj, nb.vmath("SCALE", dj, scale=rf))
     pos_jouet = nb.vmath("ADD", V, nb.vmath("SCALE", nb.vmath("SUBTRACT", cible, V), scale=contact))
     jouet_def = nb.set_position(jouet2, pos_jouet)

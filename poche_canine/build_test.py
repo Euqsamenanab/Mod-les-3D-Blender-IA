@@ -115,7 +115,7 @@ def main():
 
     # ---------------------------------------------------------------- jouets seuls
     test.hide_render = True
-    cam_jouets = studio.camera("Cam_Jouets", (0.25, -0.62, 0.24), (0.25, 0.05, 0.12), 50)
+    cam_jouets = studio.camera("Cam_Jouets", (0.25, -0.80, 0.30), (0.25, 0.05, 0.155), 50)
     if want("20"):
         studio.render(scene, out("20_jouets.png"), cam_jouets)
 
@@ -129,7 +129,7 @@ def main():
 
     sheet("21", "21_jouets_reglages.png", cam_jouets, [
         ("Réglages par défaut", {}),
-        ("Lisse plus gros, perles 8 + écarts, gros nœud", {
+        ("Réglages modifiés", {
             "lisse": dict(Diamètre=0.05, Diamètre_pointe=0.04, Longueur=0.26),
             "perles": {"Nombre_de_perles": 8, "Écart_1": 0.015, "Écart_3": 0.015, "Écart_5": 0.015,
                        "Perle_2": 0.022, "Perle_4": 0.03, "Perle_6": 0.038},
@@ -169,7 +169,7 @@ def main():
         ("Jouet souple, butée au fond (+3 cm)", dict(Rigidité_jouet=0.15)),
         ("Latex souple (rigidité 0.1)", dict(Rigidité_jouet=1.0, Rigidité_poche=0.1)),
         ("Latex ferme (rigidité 0.8)", dict(Rigidité_jouet=1.0, Rigidité_poche=0.8)),
-    ], lambda v: reglages(test, Jouet=jouets["lisse"], Insertion=fond + 0.03, Rigidité_poche=0.3, **v))
+    ], lambda v: reglages(test, **{"Jouet": jouets["lisse"], "Insertion": fond + 0.03, "Rigidité_poche": 0.3, **v}))
     reglages(test, Rigidité_poche=0.3, Rigidité_jouet=1.0)
 
     # ---------------------------------------------------------------- vue extérieure, latex transparent

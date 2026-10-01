@@ -155,8 +155,11 @@ Modèle de déformation, instantané et sans simulation :
   lèvres s'écartent.
 - **Diffusion :** la dilatation est étalée le long du latex, plus largement quand
   il est rigide.
-- **Butée au fond :** le jouet pousse le fond du canal. Un jouet souple se tasse
-  (avec renflement) et fléchit dans la partie restée dehors.
+- **Butée au fond :** le fond du canal recule d'abord devant la pointe, puis le
+  canal se dilate. Un jouet souple se tasse (avec renflement) et fléchit quand au
+  moins 3 cm restent dehors.
+- **Jouet souple :** un jouet plein est presque incompressible, donc il cède au plus
+  35 % du recouvrement en diamètre ; le reste va au latex.
 
 C'est une déformation cinématique : elle ne calcule pas de forces, donc pas de
 frottement ni de retenue du nœud. La simulation physique est l'étape suivante.
