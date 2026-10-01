@@ -202,3 +202,32 @@ class RingMesh:
             vals += [e.get(name, np.zeros(e["_m"])) for e in self.extra_attrs]
             attrs[name] = np.concatenate(vals)
         return verts, faces, attrs
+
+
+def fusionner(parties, liens):
+    """Fusionne plusieurs maillages (verts, faces, attrs) en identifiant des sommets.
+
+    liens : (partie, sommet, partie_cible, sommet_cible) : le sommet est remplacé par le
+    sommet cible (qui est conservé). Retourne (verts, faces, attrs, index, decalages_faces) :
+    index[p][i] est l'index final du sommet i de la partie p, decalages_faces[p] l'index de
+    la première face de la partie p.
+    """
+    off = np.cumsum([0] + [len(v) for v, _, _ in parties])
+    parent = np.arange(off[-1])
+    for p, i, q, j in liens:
+        parent[off[p] + i] = off[q] + j
+    racine = parent.copy()
+    for _ in range(len(parties)):
+        racine = parent[racine]
+    garde = racine == np.arange(off[-1])
+    nouvel = np.cumsum(garde) - 1
+    final = nouvel[racine]
+    verts = np.vstack([v for v, _, _ in parties])[garde]
+    faces, f_off = [], []
+    for p, (_, fs, _) in enumerate(parties):
+        f_off.append(len(faces))
+        faces += [tuple(int(final[off[p] + i]) for i in f) for f in fs]
+    noms = sorted({k for _, _, a in parties for k in a})
+    attrs = {k: np.concatenate([a.get(k, np.zeros(len(v))) for v, _, a in parties])[garde] for k in noms}
+    index = [final[off[p]:off[p + 1]] for p in range(len(parties))]
+    return verts, faces, attrs, index, f_off

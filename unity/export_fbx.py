@@ -1,6 +1,9 @@
 """Export FBX pour Unity 6 (URP) : output/unity/*.fbx.
 
-Usage : python unity/export_fbx.py [--subdiv-poche=1] [--subdiv-jouets=N] [--only=poche,lisse,perles,noue]
+Usage : python unity/export_fbx.py [--subdiv-poche=1] [--subdiv-jouets=N] [--only=poche,lisse,perles,noue,...]
+
+`--only` accepte aussi les variantes de la poche (Poche_Oeuf_Bulbe, Poche_Sablier_Coeur,
+Poche_Fessier_Double, Poche_Sablier_Anus) ; par défaut, tout est exporté.
 
 Subdivision par défaut : poche 1, jouets lisse et à perles 1, jouet noué 0 (son gabarit
 est déjà dense : 160 x 300). `--subdiv-jouets` impose le même niveau à tous les jouets.
@@ -13,7 +16,7 @@ change jamais.
 
 Repère Unity : Y en haut, mètres, échelle 1, rotation 0 (transformations appliquées).
 - Poche : pivot au centre de l'entrée du canal ; la vulve regarde +Z (avant de l'objet),
-  le canal s'enfonce vers -Z.
+  le canal s'enfonce vers -Z. Double entrée : pivot à l'entrée du vagin, anus au-dessus.
 - Jouets : pivot au centre de la base ; la pointe vers +Y ; le dessous (urètre du
   jouet noué) vers -Z.
 """
@@ -29,7 +32,9 @@ import numpy as np  # noqa: E402
 from jouets.generateurs import creer_jouet, regler  # noqa: E402
 from lib import studio  # noqa: E402
 from lib.materials import latex_material  # noqa: E402
+from poche_canine.build_variantes import creer  # noqa: E402
 from poche_canine.objet import make_sleeve, set_keys  # noqa: E402
+from poche_canine.variantes import VARIANTES  # noqa: E402
 
 OUT = os.path.join(ROOT, "output", "unity")
 
@@ -42,7 +47,7 @@ SUBDIV_POCHE = int(option("subdiv-poche", "1"))
 SUBDIV_JOUETS = {"lisse": 1, "perles": 1, "noue": 0}
 if option("subdiv-jouets", None) is not None:
     SUBDIV_JOUETS = dict.fromkeys(SUBDIV_JOUETS, int(option("subdiv-jouets", None)))
-SEULEMENT = option("only", "poche,lisse,perles,noue").split(",")
+SEULEMENT = option("only", ",".join(["poche", "lisse", "perles", "noue", *VARIANTES])).split(",")
 
 
 def _fois(f, *noms):
@@ -143,14 +148,20 @@ def exporter(ob, chemin):
 
 
 # --------------------------------------------------------------------------- objets
-def poche():
-    ob, _ = make_sleeve()
+def poche(nom="Poche_Canine"):
+    if nom == "Poche_Canine":
+        ob, _ = make_sleeve()
+    else:
+        ob, _, _ = creer(nom)
     ob.modifiers["Subdivision"].levels = SUBDIV_POCHE
     cles = [kb.name for kb in ob.data.shape_keys.key_blocks[1:]]
     variantes = [(c, (lambda c=c: set_keys(ob, **{c: 1.0})), (lambda: set_keys(ob))) for c in cles]
     set_keys(ob)
-    fige = figer(ob, "Poche_Canine", variantes, decalage=(0.0, 0.0, -ob["axe_canal_z"]))
+    fige = figer(ob, nom, variantes, decalage=(0.0, 0.0, -ob["axe_canal_z"]))
     print(f"  profondeur du canal : {ob['profondeur_canal'] * 100:.1f} cm")
+    if "axe_anus_z" in ob:
+        print(f"  anus : axe {(ob['axe_anus_z'] - ob['axe_canal_z']) * 100:.1f} cm au-dessus du pivot, "
+              f"canal de {ob['profondeur_anus'] * 100:.1f} cm")
     return fige
 
 
@@ -187,7 +198,7 @@ def main():
     studio.reset_scene()
     for kind in SEULEMENT:
         print(f"== {kind}")
-        ob = poche() if kind == "poche" else jouet(kind)
+        ob = poche() if kind == "poche" else poche(kind) if kind in VARIANTES else jouet(kind)
         exporter(ob, os.path.join(OUT, f"{ob.name}.fbx"))
 
 

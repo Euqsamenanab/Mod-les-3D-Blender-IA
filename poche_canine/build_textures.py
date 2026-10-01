@@ -1,6 +1,10 @@
 """UV et textures du vagin de poche : output/poche_canine/textures/ + poche_canine_textures.blend.
 
 Usage : python poche_canine/build_textures.py [--res=4096|8192] [--quick] [--no-render]
+        python poche_canine/build_textures.py --variante=Poche_Oeuf_Bulbe [--res=4096|8192]
+
+Avec --variante : cartes dans output/poche_canine/variantes/textures/ et
+<Variante>_textures.blend dans output/poche_canine/variantes/ (sans rendus de contrôle).
 
 Cartes produites (PNG 8 bits, prêtes pour Unity URP Lit) :
 - Poche_Canine_BaseColor_<res>.png : couleur du latex, teinte de la vulve, intérieur (sRGB)
@@ -26,8 +30,12 @@ from lib.uv import materiau_damier, planche_uv  # noqa: E402
 from poche_canine.objet import make_sleeve, zones  # noqa: E402
 from poche_canine.sleeve import build  # noqa: E402
 
+VARIANTE = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--variante=")), None)
 OUT = os.path.join(ROOT, "output", "poche_canine")
+if VARIANTE:
+    OUT = os.path.join(OUT, "variantes")
 TEX = os.path.join(OUT, "textures")
+PREFIXE = VARIANTE or "Poche_Canine"
 QUICK = "--quick" in sys.argv
 RES = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--res=")), "4096"))
 if QUICK:
@@ -126,7 +134,7 @@ def relief():
 
 def materiau_texture(images, reglages):
     """Matériau de contrôle utilisant les textures cuites (comme dans Unity)."""
-    m = bpy.data.materials.new("Latex_Poche_Textures")
+    m = bpy.data.materials.new(f"Latex_{PREFIXE}_Textures")
     m.use_nodes = True
     nt = m.node_tree
     p = nt.nodes["Principled BSDF"]
@@ -160,7 +168,11 @@ def materiau_texture(images, reglages):
 def main():
     os.makedirs(TEX, exist_ok=True)
     scene = studio.reset_scene()
-    poche, mat = make_sleeve()                       # maillage + UV + shape keys
+    if VARIANTE:
+        from poche_canine.build_variantes import creer
+        poche, mat, _ = creer(VARIANTE)
+    else:
+        poche, mat = make_sleeve()                   # maillage + UV + shape keys
     poche.modifiers["Subdivision"].levels = 2         # même géométrie lissée pour la cuisson
     poche.modifiers["Subdivision"].render_levels = 2
     ctl = latex_controls(mat)
@@ -178,18 +190,20 @@ def main():
                                       ("Masques", "EMIT", m_masques, False, 1),
                                       ("Normal", "NORMAL", m_relief, False, 4),
                                       ("AO", "AO", None, False, 16 if QUICK else 64)):
-        img = nouvelle_image(f"Poche_Canine_{cle}_{SUFFIXE}", RES, couleur)
-        cuire(poche, img, os.path.join(TEX, f"Poche_Canine_{cle}_{SUFFIXE}.png"), typ, m, ech)
+        img = nouvelle_image(f"{PREFIXE}_{cle}_{SUFFIXE}", RES, couleur)
+        cuire(poche, img, os.path.join(TEX, f"{PREFIXE}_{cle}_{SUFFIXE}.png"), typ, m, ech)
         images[cle] = img
         print(f"{cle} cuit en {time.time() - t0:.0f} s")
 
     mtex = materiau_texture(images, reglages)
     poche.data.materials.append(mtex)                 # 2e matériau disponible (non assigné)
     nom_blend = "poche_canine_textures.blend" if RES == 4096 else f"poche_canine_textures_{SUFFIXE}.blend"
+    if VARIANTE:
+        nom_blend = f"{VARIANTE}_textures.blend" if RES == 4096 else f"{VARIANTE}_textures_{SUFFIXE}.blend"
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, nom_blend), compress=True)
     bpy.ops.file.make_paths_relative()                # textures en chemins relatifs (//textures/...)
     bpy.ops.wm.save_mainfile(compress=True)
-    if "--no-render" in sys.argv:
+    if "--no-render" in sys.argv or VARIANTE:
         return
 
     # ---------------------------------------------------------------- rendus de contrôle
@@ -243,4 +257,5 @@ def main():
                          out("43_cartes_textures.png"), cols=4)
 
 
-main()
+if __name__ == "__main__":
+    main()

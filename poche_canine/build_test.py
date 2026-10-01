@@ -183,4 +183,5 @@ def main():
         studio.render(scene, out("26_insertion_transparente.png"), cam)
 
 
-main()
+if __name__ == "__main__":
+    main()

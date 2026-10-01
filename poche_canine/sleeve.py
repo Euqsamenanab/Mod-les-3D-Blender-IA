@@ -1,9 +1,10 @@
-"""Vagin de poche à vulve canine stylisée (personnage anthro/furry).
+"""Vagin de poche à vulve canine stylisée (personnage anthro/furry), et ses variantes.
 
 Géométrie pure (numpy, sans bpy) : le maillage est une suite d'anneaux de N sommets.
 
     fond du canal (cap) -> canal -> chambre du nœud -> anneau d'entrée -> vestibule
-    -> fente en Y -> lèvres -> face avant -> arrondi -> flancs -> arrière (cap)
+    -> ouverture (fente en Y ou anus) -> lèvres / bourrelet -> face avant -> arrondi
+    -> flancs -> arrière (cap)
 
 Chaque anneau a la même indexation, donc toute variante de paramètres (lèvres
 gonflées, détails du canal) donne exactement la même topologie : c'est ce qui
@@ -11,6 +12,14 @@ permet d'en faire des shape keys (voir SHAPE_KEYS). Les contours de la fente et 
 la vulve sont échantillonnés avec une paramétrisation fixe : chaque sommet garde sa
 place « structurelle » quand on change une dimension, ce qui rend les shape keys
 propres et combinables.
+
+Blocs réutilisables :
+- entrées : `vulve` (plusieurs styles de lèvres par les paramètres) et `anus` ;
+- canal : `canal` (vestibule, canal à chambre du nœud, fond) ;
+- corps : `face_depth` (face avant, fesses éventuelles) et `anneaux_corps`
+  (arrondi, flancs avec taille resserrée, arrière en œuf ou arrondi).
+`build` assemble une entrée unique ; `build_double` assemble vulve + anus sur une
+même face (deux canaux), en fusionnant trois maillages en anneaux.
 
 Repère local : u = horizontal, v = vertical (0 = axe du manchon), d = profondeur
 (0 = face avant, positif vers l'intérieur). Repère Blender : X = u, Y = d, Z = v + B.
@@ -22,18 +31,24 @@ import math
 
 import numpy as np
 
-from lib.geom import RingMesh, catmull_rom_open, circle, ellipse, resample_open, smooth_periodic, smoothstep
+from lib.geom import (RingMesh, catmull_rom_open, circle, ellipse, fusionner, resample_open, smooth_periodic,
+                      smoothstep)
 
 PARAMS = dict(
     N=96,                      # sommets par anneau (multiple de 8)
+    entree="vulve",            # "vulve", "anus" ou "double" (vulve + anus)
     # --- manchon
     A=0.055, B=0.065,          # demi-axes de la section (11 x 13 cm)
     L=0.24,                    # longueur totale
     Df=0.030, Db=0.025,        # profondeur des arrondis avant / arrière
     m=2.5,                     # exposant superellipse des arrondis (2 = elliptique)
+    m_back=None,               # exposant de l'arrondi arrière (None = m)
     rho_rim=0.92,              # limite face avant / arrondi
     face_s=(0.05, 0.13, 0.24, 0.38, 0.54, 0.72, 1.0),
     corner_n=6, side_step=0.010, back_n=7, back_tmax=0.82,
+    waist=0.0, waist_d=0.13, waist_s=0.045,   # taille resserrée (sablier) : creux, position, largeur
+    fesses=None,               # mini fessier : dict de réglages des fesses (voir `fesses`)
+    d_entree=0.0,              # profondeur de référence de l'entrée (None = profondeur de la face)
     # --- vulve : contour en triangle inversé arrondi (points de contrôle B-spline)
     vulva_scale=0.85,
     vulva_size=1.0,            # échelle de toute la vulve (contour + fente) autour de l'axe du canal
@@ -43,6 +58,9 @@ PARAMS = dict(
     # --- fente en Y (fermée) : bas de la tige, jonction, bras, demi-écart
     slit_vS=-0.031, slit_vJ=0.006, slit_ua=0.011, slit_va=0.013, slit_w=0.0004,
     arm_len=1.0,               # longueur des branches du Y (multiplicateur)
+    slit_open=0.0,             # Y entrouvert : demi-écart ajouté autour de la jonction
+    slit_open_span=0.005,      # portée de cette ouverture le long des branches
+    slit_lens=0.0,             # fente entrouverte en lentille le long de la tige
     # --- lèvres
     M_lip=24,                  # boucles entre la fente et le contour
     lip_h=0.75,                # hauteur max = lip_h x distance fente -> contour
@@ -63,6 +81,20 @@ PARAMS = dict(
     chamber_dr=0.0,            # + : chambre du nœud plus large, - : plus fine
     canal_step=0.00125, end_n=5,
     canal_variant=None,
+    # --- anus : ouverture fermée, bourrelet (anneau gonflé <-> plissé en étoile), canal
+    anus_v=-0.008,             # hauteur de l'axe du canal anal (entrée « anus » seule)
+    anus_M=16,                 # boucles entre l'ouverture et le contour du bourrelet
+    anus_r_open=0.0017,        # rayon de l'ouverture
+    anus_R=0.017,              # rayon du contour du bourrelet
+    anus_h=0.0100,             # hauteur du bourrelet
+    anus_pli=0.0,              # 0 = anneau gonflé, 1 = plissé en étoile
+    anus_plis_n=10,            # nombre de plis rayonnants
+    anus_ouvert=0.0,           # 0 = fermé, 1 = entrouvert
+    anus_vest_depth=0.012, anus_M_vest=12,
+    anus_canal_keys=((0.012, 0.0055, "vestibule"), (0.018, 0.0045, "anneau"), (0.026, 0.0062, None),
+                     (0.044, 0.0112, "chambre"), (0.062, 0.0095, "chambre_fin"), (0.078, 0.0070, None),
+                     (0.150, 0.0068, None)),
+    anus_ring_dr=0.0, anus_chamber_dr=0.0, anus_canal_variant=None,
 )
 
 CANAL_VARIANTS = ("Anneaux", "Nervures", "Picots", "Plis", "Anneaux_Picots", "Nervures_Plis")
@@ -95,6 +127,15 @@ CANAL_ROLES = {
     "chambre": ("chamber_dr", 1.0),
     "chambre_fin": ("chamber_dr", 0.8),
 }
+CANAL_PARAMS = ("canal_keys", "vest_depth", "M_vest", "ring_dr", "chamber_dr", "canal_variant")
+
+
+def params_canal(P, prefixe=""):
+    """Réglages du canal : ceux du vagin, ou ceux préfixés (« anus_ ») pour le canal anal."""
+    Pc = dict(P)
+    if prefixe:
+        Pc.update({k: P[prefixe + k] for k in CANAL_PARAMS})
+    return Pc
 
 
 # --------------------------------------------------------------------------- contours 2D
@@ -146,6 +187,30 @@ def y_slit_outline(vS, vJ, ua, va, w, counts):
     return np.vstack([right, notch[None], left])
 
 
+def ouvrir_fente(slit, vS, vJ, ua, va, ouverture, portee, lentille):
+    """Écarte les bords de la fente : autour de la jonction du Y (`ouverture`, sur `portee`)
+    et en lentille le long de la tige (`lentille`). Chaque point s'éloigne de l'axe du Y."""
+    J = np.array([0.0, vJ])
+    segs = [(np.array([0.0, vS]), J), (J, J + np.array([ua, va])), (J, J + np.array([-ua, va]))]
+    out = slit.copy()
+    for i, p in enumerate(slit):
+        best = None
+        for s, (a, b) in enumerate(segs):
+            ab = b - a
+            t = float(np.clip(np.dot(p - a, ab) / np.dot(ab, ab), 0, 1))
+            q = a + t * ab
+            dist = np.linalg.norm(p - q)
+            if best is None or dist < best[0]:
+                best = (dist, q, s, t)
+        dist, q, s, t = best
+        n = (p - q) / dist if dist > 1e-12 else np.array([1.0 if p[0] >= 0 else -1.0, 0.0])
+        o = ouverture * math.exp(-(np.linalg.norm(q - J) / portee) ** 2)
+        if s == 0:
+            o += lentille * max(0.0, math.sin(math.pi * t)) ** 1.5
+        out[i] = p + o * n
+    return out
+
+
 def bspline_eval(ctrl, t):
     """B-spline cubique uniforme fermée évaluée aux paramètres t (dans [0, n))."""
     c = np.asarray(ctrl, float)
@@ -159,7 +224,7 @@ def bspline_eval(ctrl, t):
     return b0 * c[(i - 1) % n] + b1 * c[i % n] + b2 * c[(i + 1) % n] + b3 * c[(i + 2) % n]
 
 
-@functools.lru_cache(maxsize=8)
+@functools.lru_cache(maxsize=32)
 def vulva_params(ctrl, n):
     """Paramètres B-spline de n points équidistants sur la forme de base, départ à la pointe."""
     m = len(ctrl)
@@ -183,13 +248,37 @@ def vulva_outline(P):
     return bspline_eval(ctrl * P["vulva_scale"], vulva_params(base, P["N"]))
 
 
-# --------------------------------------------------------------------------- profils
+# --------------------------------------------------------------------------- face avant
+def fesses(F, uv, rho, rho_rim):
+    """Relief des fesses (vers l'avant, m) : deux dômes séparés par un sillon arrondi."""
+    u, v = uv[:, 0], uv[:, 1]
+
+    def joue(cu):
+        x = ((u - cu) / F["ru"]) ** 2 + ((v - F["cv"]) / F["rv"]) ** 2
+        r = np.maximum(1.0 - x, 0.0)
+        return F["h"] * np.sqrt(r) * smoothstep(r / 0.35)
+
+    a, b = joue(F["cu"]), joue(-F["cu"])
+    k = F["k"]
+    bosse = 0.5 * (a + b + np.sqrt((a - b) ** 2 + k * k)) - 0.5 * k      # max lissé : sillon arrondi
+    return np.maximum(bosse, 0.0) * (1.0 - smoothstep((rho - F["fondu"]) / (rho_rim - F["fondu"])))
+
+
 def face_depth(P, uv):
     rho = np.sqrt((uv[:, 0] / P["A"]) ** 2 + (uv[:, 1] / P["B"]) ** 2)
     rho = np.clip(rho, 0.0, 0.999999)
-    return P["Df"] * (1 - (1 - rho ** P["m"]) ** (1 / P["m"]))
+    d = P["Df"] * (1 - (1 - rho ** P["m"]) ** (1 / P["m"]))
+    if P["fesses"]:
+        d = d - fesses(P["fesses"], uv, rho, P["rho_rim"])
+        # replats : la face devient plane autour d'une entrée (r < r1), puis rejoint le relief (r2)
+        for (cu, cv), r1, r2 in P.get("replats", ()):
+            plan = face_depth({**P, "replats": ()}, np.array([[cu, cv]]))[0]
+            w = 1.0 - smoothstep((np.hypot(uv[:, 0] - cu, uv[:, 1] - cv) - r1) / (r2 - r1))
+            d = d + w * (plan - d)
+    return d
 
 
+# --------------------------------------------------------------------------- canal
 def canal_profile(P):
     """Profil (profondeurs, rayons) du canal après les réglages anneau / chambre."""
     xs = np.array([k[0] for k in P["canal_keys"]])
@@ -248,63 +337,79 @@ def canal_relief(variant, x, th):
     }[variant]()
 
 
-# --------------------------------------------------------------------------- construction
-def build(P=None, **overrides):
-    """Retourne (verts_monde (V,3), faces, attrs, infos)."""
-    P = copy.deepcopy(P or PARAMS)
-    P.update(overrides)
-    N = P["N"]
-    A, B, m = P["A"], P["B"], P["m"]
-    rm = RingMesh(N)
+def canal(Pc, ouverture, d_ouv, axe, d0, plat):
+    """Anneaux du vestibule, du canal et du fond, de l'ouverture vers le fond.
 
-    base_slit = (P["slit_vS"], P["slit_vJ"], P["slit_ua"], P["slit_va"], P["slit_w"])
-    counts = slit_counts(*base_slit, N)
-    v_c = 0.5 * (P["slit_vS"] + P["slit_vJ"])          # axe du canal (fixe pour toutes les shape keys)
-    slit = y_slit_outline(P["slit_vS"] - 0.006 * P["tip"], P["slit_vJ"], P["slit_ua"] * P["arm_len"],
-                          P["slit_va"] * P["arm_len"], P["slit_w"], counts)
-    tri = vulva_outline(P)
-    slit_unscaled = slit.copy()
-    center = np.array([0.0, v_c])
-    slit = center + P["vulva_size"] * (slit - center)
-    tri = center + P["vulva_size"] * (tri - center)
-    d_slit = face_depth(P, slit)
-    profile = canal_profile(P)
+    ouverture (N,2), d_ouv (N,) : bord de l'entrée ; axe (2,) : axe du canal dans la face ;
+    d0 : profondeur où commence le canal (x = 0) ; plat : le vestibule se termine à
+    profondeur constante (sinon il suit le relief de l'ouverture, comme le modèle d'origine).
+    Retourne (anneaux [(pts3d, tag, vulve, interieur)], cap_fond(Q) -> (m,3), infos).
+    """
+    N = len(ouverture)
+    profile = canal_profile(Pc)
     th = -math.pi / 2 + 2 * math.pi * np.arange(N) / N  # angle des anneaux circulaires
-
-    # ---- canal : on le construit de la fente vers le fond, puis on inverse
-    canal = []  # (pts3d, tag, vulve, interieur)
-    xv = P["vest_depth"]
+    anneaux = []
+    xv = Pc["vest_depth"]
     r_v = canal_radius(profile, xv)[0]
-    circ_v = circle(r_v, N, (0.0, v_c))
-    for j in range(1, P["M_vest"] + 1):
-        t = j / P["M_vest"]
+    circ_v = circle(r_v, N, axe)
+    for j in range(1, Pc["M_vest"] + 1):
+        t = j / Pc["M_vest"]
         e = smoothstep(t) ** 0.8
-        uv = slit + e * (circ_v - slit)
-        d = d_slit + xv * t
-        canal.append((np.column_stack([uv, d]), "vestibule", 1.0, 1.0))
+        uv = ouverture + e * (circ_v - ouverture)
+        d = d_ouv + (d0 + xv - d_ouv) * t if plat else d_ouv + xv * t
+        anneaux.append((np.column_stack([uv, d]), "vestibule", 1.0, 1.0))
 
     x_end = profile[0][-1]
-    xs = np.arange(xv + P["canal_step"], x_end + 1e-9, P["canal_step"])
+    xs = np.arange(xv + Pc["canal_step"], x_end + 1e-9, Pc["canal_step"])
     for x in xs:
         r = canal_radius(profile, x)[0]
         mask = float(smoothstep((x - 0.032) / 0.010) * smoothstep((x_end + 0.004 - x) / 0.012))
-        rr = np.maximum(r - mask * canal_relief(P["canal_variant"], x, th), 0.002)
-        uv = np.column_stack([rr * np.cos(th), v_c + rr * np.sin(th)])
-        canal.append((np.column_stack([uv, np.full(N, x)]), "canal", 0.0, 1.0))
+        rr = np.maximum(r - mask * canal_relief(Pc["canal_variant"], x, th), 0.002)
+        uv = np.column_stack([axe[0] + rr * np.cos(th), axe[1] + rr * np.sin(th)])
+        anneaux.append((np.column_stack([uv, np.full(N, d0 + x)]), "canal", 0.0, 1.0))
 
     r_end = canal_radius(profile, x_end)[0]
-    alphas = np.linspace(0, 0.38 * math.pi, P["end_n"] + 1)[1:]
+    alphas = np.linspace(0, 0.38 * math.pi, Pc["end_n"] + 1)[1:]
     for a in alphas:
         r = r_end * math.cos(a)
-        uv = np.column_stack([r * np.cos(th), v_c + r * np.sin(th)])
-        canal.append((np.column_stack([uv, np.full(N, x_end + r_end * math.sin(a))]), "fond", 0.0, 1.0))
+        uv = np.column_stack([axe[0] + r * np.cos(th), axe[1] + r * np.sin(th)])
+        anneaux.append((np.column_stack([uv, np.full(N, d0 + x_end + r_end * math.sin(a))]), "fond", 0.0, 1.0))
 
-    for pts, tag, vu, it in reversed(canal):
-        rm.add_ring(pts, tag, vulve=vu, interieur=it)
-    ring_fond = 0
+    def cap_fond(Q):
+        rr = np.hypot(Q[:, 0] - axe[0], Q[:, 1] - axe[1])
+        return np.column_stack([Q, d0 + x_end + np.sqrt(np.maximum(r_end**2 - rr**2, 0.0))])
 
-    # ---- fente
-    rm.add_ring(np.column_stack([slit, d_slit]), "fente", vulve=1.0, interieur=1.0)
+    # coupe UV après la chambre du nœud : profondeur du point qui suit « chambre_fin », + 7 mm
+    roles = [k[2] for k in Pc["canal_keys"]]
+    x_coupe = Pc["canal_keys"][roles.index("chambre_fin") + 1][0] + 0.007
+    i_canal = [i for i, a in enumerate(anneaux) if a[1] == "canal"]
+    i_coupe = min(i_canal, key=lambda i: abs(anneaux[i][0][0, 2] - d0 - x_coupe))
+    infos = dict(profondeur=d0 + x_end + r_end, coupe=len(anneaux) - 1 - i_coupe)   # coupe : index après inversion
+    return anneaux, cap_fond, infos
+
+
+# --------------------------------------------------------------------------- entrées
+def vulve(P, N, decalage=(0.0, 0.0), base=None):
+    """Fente en Y, lèvres et contour de la vulve.
+
+    Retourne dict : axe (2,), ouverture (N,2), h_ouverture (N,), anneaux [(uv, h, attrs)],
+    contour (N,2). `base` : paramètres de la forme de base (topologie de la fente).
+    """
+    base = base or P
+    dec = np.asarray(decalage, float)
+    base_slit = (base["slit_vS"], base["slit_vJ"], base["slit_ua"], base["slit_va"], base["slit_w"])
+    counts = slit_counts(*base_slit, N)
+    v_c = 0.5 * (P["slit_vS"] + P["slit_vJ"])          # axe du canal (fixe pour toutes les shape keys)
+    vS = P["slit_vS"] - 0.006 * P["tip"]
+    ua, va = P["slit_ua"] * P["arm_len"], P["slit_va"] * P["arm_len"]
+    slit = y_slit_outline(vS, P["slit_vJ"], ua, va, P["slit_w"], counts)
+    if P["slit_open"] or P["slit_lens"]:
+        slit = ouvrir_fente(slit, vS, P["slit_vJ"], ua, va, P["slit_open"], P["slit_open_span"], P["slit_lens"])
+    tri = vulva_outline(P)
+    slit_unscaled = slit.copy()
+    center = np.array([0.0, v_c])
+    slit = center + P["vulva_size"] * (slit - center) + dec
+    tri = center + P["vulva_size"] * (tri - center) + dec
 
     # ---- lèvres
     dist = np.linalg.norm(tri - slit, axis=1)
@@ -317,57 +422,373 @@ def build(P=None, **overrides):
     Ml = P["M_lip"]
     prof = resample_open(catmull_rom_open(P["lip_profile"]), Ml + 1, metric=(1.0, P["lip_h"]))
     prof[-1] = (1.0, 0.0)
+    anneaux = []
     for i in range(1, Ml + 1):
         f, hn = prof[i]
         t = i / Ml
         uv = slit + f * (tri - slit)
         h = H * hn - P["fold_amp"] * fold_mask * math.sin(math.pi * t) * max(0.0, math.sin(2 * P["fold_count"] * math.pi * t))
-        d = face_depth(P, uv) - h
         inner = 1.0 - float(smoothstep((t - 0.22) / 0.15))
         # attributs pour les textures : position radiale sur la lèvre, angle, zone de la pointe
-        rm.add_ring(np.column_stack([uv, d]), "levres", vulve=1.0, interieur=inner,
-                    levre_t=t, levre_k=np.arange(N) / N, pointe=fold_mask)
+        anneaux.append((uv, h, dict(vulve=1.0, interieur=inner, levre_t=t, levre_k=np.arange(N) / N, pointe=fold_mask)))
+    return dict(axe=center + dec, ouverture=slit, h_ouverture=np.zeros(N), anneaux=anneaux, contour=tri)
 
-    # ---- face avant (du contour de la vulve au bord de l'arrondi)
-    rim = ellipse(P["rho_rim"] * A, P["rho_rim"] * B, N)
-    for i, s in enumerate(P["face_s"]):
-        uv = tri + s * (rim - tri)
+
+def anus(P, N, centre=None, angles=None):
+    """Ouverture, bourrelet et contour de l'anus.
+
+    La forme passe de l'anneau gonflé (anus_pli = 0) au plissé en étoile (anus_pli = 1)
+    sans changer la topologie. `angles` : angle de chaque sommet autour du centre
+    (par défaut réguliers, départ en bas).
+    """
+    c = np.array(centre if centre is not None else (0.0, P["anus_v"]), float)
+    th = -math.pi / 2 + 2 * math.pi * np.arange(N) / N if angles is None else np.asarray(angles, float)
+    pli, n = P["anus_pli"], P["anus_plis_n"]
+    vallee = ((1 + np.cos(n * (th + math.pi / 2))) / 2) ** 3        # 1 dans l'axe de chaque pli (un pli en bas)
+
+    # ouverture : petit trou rond (anneau) ou petite étoile (plissé), qui s'entrouvre
+    r_o = P["anus_r_open"] * (1 + 1.8 * P["anus_ouvert"])
+    r_open = r_o * ((1 - pli) + pli * (0.35 + 0.45 * (1 - vallee)))
+    # contour : rond (anneau) ou losange vertical aux bords arrondis (plissé)
+    R = P["anus_R"]
+    a, b, p = 0.92 * R, 1.25 * R, 1.4
+    losange = 1.0 / ((np.abs(np.cos(th)) / a) ** p + (np.abs(np.sin(th)) / b) ** p) ** (1 / p)
+    R_out = (1 - pli) * R + pli * losange
+
+    # anneau gonflé : cratère autour du trou, bourrelet rond à mi-rayon, pied concave
+    prof_d = catmull_rom_open(((0.0, -0.10), (0.07, 0.18), (0.15, 0.47), (0.26, 0.76), (0.39, 0.94),
+                               (0.53, 1.0), (0.66, 0.91), (0.78, 0.64), (0.89, 0.28), (1.0, 0.0)))
+
+    def hauteur(t):
+        h_anneau = np.interp(t, prof_d[:, 0], prof_d[:, 1])
+        creux = 0.75 * (1 - t) ** 0.7 * vallee
+        h_plisse = 0.55 * (1 - t * t) ** 1.2 * (0.25 + 0.75 * smoothstep(t / 0.18)) * (1 - creux)
+        return P["anus_h"] * ((1 - pli) * h_anneau + pli * h_plisse)
+
+    def point(t):
+        r = r_open + (R_out - r_open) * t ** 1.35
+        r = r * (1 - 0.10 * pli * vallee * (1 - t))       # les plis tirent légèrement vers le centre
+        return np.column_stack([c[0] + r * np.cos(th), c[1] + r * np.sin(th)])
+
+    M = P["anus_M"]
+    anneaux = []
+    for i in range(1, M + 1):
+        t = i / M
+        inner = 1.0 - float(smoothstep((t - 0.08) / 0.18))
+        anneaux.append((point(t), hauteur(t),
+                        dict(vulve=1.0, interieur=inner, levre_t=t, levre_k=np.arange(N) / N, pointe=0.0)))
+    return dict(axe=c, ouverture=point(0.0), h_ouverture=hauteur(0.0), anneaux=anneaux, contour=point(1.0))
+
+
+# --------------------------------------------------------------------------- corps
+def echelle_corps(P, d):
+    """Échelle de la section à la profondeur d (taille resserrée du sablier)."""
+    return 1.0 - P["waist"] * math.exp(-((d - P["waist_d"]) / P["waist_s"]) ** 2)
+
+
+def anneaux_corps(P, section, transition=None):
+    """Arrondi avant, flancs et arrière : liste de (pts3d (N,3), tag), et la fonction du cap arrière.
+
+    section (N,2) : section de référence (rho = 1) ; transition (N,2) : section ellipse
+    régulière vers laquelle on glisse dans l'arrondi avant (sections non régulières).
+    """
+    m = P["m"]
+    mb = P["m_back"] or m
+    out = []
+    t_rim = math.acos(P["rho_rim"] ** (m / 2))
+    ts = np.linspace(t_rim, 0, P["corner_n"] + 1)[1:]
+    for i, t in enumerate(ts):
+        rho = math.cos(t) ** (2 / m)
+        sec = section
+        if transition is not None:
+            sec = glisser(section, transition, P["A"], P["B"], (i + 1) / len(ts))
+        out.append((np.column_stack([rho * sec, np.full(len(sec), P["Df"] * (1 - math.sin(t) ** (2 / m)))]),
+                    "arrondi_avant"))
+    if transition is not None:
+        section = transition
+    L, Db = P["L"], P["Db"]
+    n_side = round((L - Db - P["Df"]) / P["side_step"])
+    for d in np.linspace(P["Df"], L - Db, n_side + 1)[1:] if n_side >= 1 else []:
+        out.append((np.column_stack([echelle_corps(P, d) * section, np.full(len(section), d)]), "flanc"))
+    s_dos = echelle_corps(P, L - Db)
+    for t in np.linspace(0, P["back_tmax"] * math.pi / 2, P["back_n"] + 1)[1:]:
+        rho = s_dos * math.cos(t) ** (2 / mb)
+        out.append((np.column_stack([rho * section, np.full(len(section), L - Db * (1 - math.sin(t) ** (2 / mb)))]),
+                    "arriere"))
+
+    def cap_dos(Q):
+        rho = np.clip(np.sqrt((Q[:, 0] / (s_dos * P["A"])) ** 2 + (Q[:, 1] / (s_dos * P["B"])) ** 2), 0, 0.999999)
+        return np.column_stack([Q, L - Db * (1 - (1 - rho**mb) ** (1 / mb))])
+
+    return out, cap_dos
+
+
+def glisser(section, cible, A, B, w):
+    """Points sur l'ellipse (A, B) dont l'angle passe de celui de `section` à celui de `cible`."""
+    a0 = np.unwrap(np.arctan2(section[:, 1] / B, section[:, 0] / A))
+    a1 = np.unwrap(np.arctan2(cible[:, 1] / B, cible[:, 0] / A))
+    a1 += 2 * math.pi * np.round((a0[0] - a1[0]) / (2 * math.pi))
+    a = (1 - w) * a0 + w * a1
+    return np.column_stack([A * np.cos(a), B * np.sin(a)])
+
+
+# --------------------------------------------------------------------------- assemblage
+def _parametres(P, overrides):
+    base = copy.deepcopy(P or PARAMS)
+    P = copy.deepcopy(base)
+    P.update(overrides)
+    return base, P
+
+
+def _entree(P, N, base, **kw):
+    if P["entree"] == "anus":
+        return anus(P, N, **kw), params_canal(P, "anus_")
+    return vulve(P, N, base=base, **kw), params_canal(P)
+
+
+def _region_entree(rm, P, ent, Pc, couronne):
+    """Ajoute à `rm` le canal, l'ouverture, les lèvres / le bourrelet, puis la couronne de
+    face (anneaux uv sans relief, jusqu'à la dernière). Retourne (cap_fond, infos du canal,
+    index des anneaux remarquables)."""
+    N = len(ent["ouverture"])
+    d_ouv = face_depth(P, ent["ouverture"]) - ent["h_ouverture"]
+    plat = P["d_entree"] is None
+    d0 = float(face_depth(P, ent["axe"][None])[0]) if plat else P["d_entree"]
+    anneaux, cap_fond, ic = canal(Pc, ent["ouverture"], d_ouv, ent["axe"], d0, plat)
+    for pts, tag, vu, it in reversed(anneaux):
+        rm.add_ring(pts, tag, vulve=vu, interieur=it)
+    r = dict(fond=0, coupe=ic["coupe"], ouverture=len(rm.rings))
+    rm.add_ring(np.column_stack([ent["ouverture"], d_ouv]), "fente", vulve=1.0, interieur=1.0)
+    for uv, h, at in ent["anneaux"]:
+        rm.add_ring(np.column_stack([uv, face_depth(P, uv) - h]), "levres", **at)
+    r["bord"] = len(rm.rings) - 1
+    for i, uv in enumerate(couronne):
         rm.add_ring(np.column_stack([uv, face_depth(P, uv)]), "face", vulve=0.35 if i == 0 else 0.0, interieur=0.0)
+    r["couronne"] = len(rm.rings) - 1
+    return cap_fond, ic, r
+
+
+def _boucles(N, rings, ligne):
+    """Arêtes de couture : boucles complètes des anneaux `rings` et ligne k = 0 de ligne[0] à ligne[1]."""
+    c = [(r * N + k, r * N + (k + 1) % N) for r in rings for k in range(N)]
+    c += [(r * N, (r + 1) * N) for r in range(ligne[0], ligne[1])]
+    return c
+
+
+def _zones(N, bornes):
+    """Faces par zone pour un maillage en anneaux : bornes = [(zone, anneau_fin)], puis les caps."""
+    zones, r0 = {}, 0
+    for zone, r1 in bornes:
+        zones.setdefault(zone, []).extend(range(r0 * N, r1 * N))
+        r0 = r1
+    return zones
+
+
+def build(P=None, **overrides):
+    """Retourne (verts_monde (V,3), faces, attrs, infos)."""
+    base, P = _parametres(P, overrides)
+    if P["entree"] == "double":
+        return build_double(base, P)
+    N = P["N"]
+    A, B = P["A"], P["B"]
+    rm = RingMesh(N)
+
+    ent, Pc = _entree(P, N, base)
+    rim = ellipse(P["rho_rim"] * A, P["rho_rim"] * B, N)
+    couronne = [ent["contour"] + s * (rim - ent["contour"]) for s in P["face_s"]]
+    cap_fond, ic, r = _region_entree(rm, P, ent, Pc, couronne)
 
     # ---- arrondi avant, flancs, arrondi arrière
-    t_rim = math.acos(P["rho_rim"] ** (m / 2))
-    for t in np.linspace(t_rim, 0, P["corner_n"] + 1)[1:]:
-        rho = math.cos(t) ** (2 / m)
-        uv = ellipse(rho * A, rho * B, N)
-        rm.add_ring(np.column_stack([uv, np.full(N, P["Df"] * (1 - math.sin(t) ** (2 / m)))]), "arrondi_avant")
-    L, Db = P["L"], P["Db"]
-    n_side = max(1, round((L - Db - P["Df"]) / P["side_step"]))
-    oval = ellipse(A, B, N)
-    for d in np.linspace(P["Df"], L - Db, n_side + 1)[1:]:
-        rm.add_ring(np.column_stack([oval, np.full(N, d)]), "flanc")
-    for t in np.linspace(0, P["back_tmax"] * math.pi / 2, P["back_n"] + 1)[1:]:
-        rho = math.cos(t) ** (2 / m)
-        uv = ellipse(rho * A, rho * B, N)
-        rm.add_ring(np.column_stack([uv, np.full(N, L - Db * (1 - math.sin(t) ** (2 / m)))]), "arriere")
+    corps, cap_dos = anneaux_corps(P, ellipse(A, B, N))
+    for pts, tag in corps:
+        rm.add_ring(pts, tag)
     ring_dos = len(rm.rings) - 1
 
     # ---- caps (grilles de quads)
     q = N // 8  # index de l'anneau à -45° (départ en bas, anti-horaire)
-
-    def cap_fond(Q):
-        rr = np.hypot(Q[:, 0], Q[:, 1] - v_c)
-        return np.column_stack([Q, x_end + np.sqrt(np.maximum(r_end**2 - rr**2, 0.0))])
-
-    rm.cap(ring_fond, lambda R: R[:, :2], cap_fond, q, vulve=0.0, interieur=1.0)
-
-    def cap_dos(Q):
-        rho = np.clip(np.sqrt((Q[:, 0] / A) ** 2 + (Q[:, 1] / B) ** 2), 0, 0.999999)
-        return np.column_stack([Q, L - Db * (1 - (1 - rho**m) ** (1 / m))])
-
-    rm.cap(ring_dos, lambda R: R[:, :2], cap_dos, q, vulve=0.0, interieur=0.0)
+    rm.cap(0, lambda R_: R_[:, :2], cap_fond, q, vulve=0.0, interieur=1.0)
+    rm.cap(ring_dos, lambda R_: R_[:, :2], cap_dos, q, vulve=0.0, interieur=0.0)
 
     verts, faces, attrs = rm.build()
     world = np.column_stack([verts[:, 0], verts[:, 2], verts[:, 1] + B])
-    infos = dict(axe_canal_z=v_c + B, profondeur_canal=x_end + r_end, n_anneaux=len(rm.rings),
-                 tags=rm.tags, N=N, profondeurs=[float(r[:, 2].mean()) for r in rm.rings])
+    R = len(rm.rings)
+    n_fond = len(rm.cap_faces[0][3])
+    zones = _zones(N, [("canal", r["coupe"]), ("entree", r["ouverture"]), ("levres", r["bord"]),
+                       ("face", r["couronne"]), ("corps", R - 1)])
+    zones["canal"].extend(range((R - 1) * N, (R - 1) * N + n_fond))
+    zones["corps"].extend(range((R - 1) * N + n_fond, len(faces)))
+    infos = dict(axe_canal_z=float(ent["axe"][1] + B), profondeur_canal=ic["profondeur"], n_anneaux=R,
+                 tags=rm.tags, N=N, profondeurs=[float(x[:, 2].mean()) for x in rm.rings],
+                 coutures=_boucles(N, (0, r["coupe"], r["ouverture"], r["bord"], r["couronne"], ring_dos),
+                                   (0, ring_dos)),
+                 zones_faces=zones, echelles_uv={"levres": 2.0, "face": 1.2})
+    return world, faces, attrs, infos
+
+
+# --------------------------------------------------------------------------- double entrée
+def rayon_vers(centre, angles, courbe):
+    """Intersections des rayons partant de `centre` aux `angles` avec une polyligne fermée dense."""
+    seg_a, seg_b = courbe, np.roll(courbe, -1, axis=0)
+    out = []
+    for a in angles:
+        d = np.array([math.cos(a), math.sin(a)])
+        e = seg_b - seg_a
+        w = seg_a - centre
+        den = d[0] * e[:, 1] - d[1] * e[:, 0]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = (w[:, 0] * e[:, 1] - w[:, 1] * e[:, 0]) / den
+            s = (w[:, 0] * d[1] - w[:, 1] * d[0]) / den
+        ok = (np.abs(den) > 1e-15) & (s >= -1e-9) & (s <= 1 + 1e-9) & (t > 0)
+        out.append(centre + t[ok].min() * d)
+    return np.array(out)
+
+
+def _demi_ellipse(cu, cv, a, b, bas, n=4000):
+    """Demi-ellipse dense (du côté bas ou haut), de (+a, cv) à (-a, cv)."""
+    t = np.linspace(0, math.pi, n)
+    sgn = -1.0 if bas else 1.0
+    return np.column_stack([cu + a * np.cos(t), cv + sgn * b * np.sin(t)])
+
+
+@functools.lru_cache(maxsize=8)
+def _topologie_double(cle):
+    """Bords des deux régions (vulve en bas, anus en haut), calculés sur la forme de base.
+
+    Retourne (BV (Nv,2), k_J, BA (Na,2), angles de l'anus (Na,)).
+    """
+    P = dict(cle)
+    Nv = P["N"]
+    ent = vulve(P, Nv, decalage=(0.0, P["vulve_v"] - 0.5 * (P["slit_vS"] + P["slit_vJ"])))
+    c_v = ent["axe"]
+    tri = ent["contour"]
+    vm, wm = P["milieu_v"], P["milieu_w"]
+    # bord de la vulve : demi-ellipse basse + segment du milieu
+    bas = _demi_ellipse(0.0, vm, wm, vm - P["vulve_bas"], True)
+    bord_v = np.vstack([bas[::-1], np.column_stack([np.linspace(wm, -wm, 400)[1:-1], np.full(398, vm)])])
+    ang_v = np.arctan2(tri[:, 1] - c_v[1], tri[:, 0] - c_v[0])
+    BV = rayon_vers(c_v, ang_v, bord_v)
+    # jonctions : le rayon le plus proche de chaque coin devient exactement le coin
+    a_jr = math.atan2(vm - c_v[1], wm - c_v[0])
+    k_J = int(np.argmin(np.abs(np.angle(np.exp(1j * (ang_v - a_jr))))))
+    BV[k_J] = (wm, vm)
+    BV[Nv - k_J] = (-wm, vm)
+    milieu = BV[k_J:Nv - k_J + 1][::-1]                # de J_L à J_R (gauche -> droite), c + 1 points
+    c = len(milieu) - 1
+    assert c % 2 == 0, "le milieu doit avoir un nombre pair de segments"
+    # bord de l'anus : milieu (partagé) + demi-ellipse haute échantillonnée en angle depuis l'anus
+    c_a = np.array([0.0, P["anus_centre_v"]])
+    Na = P["anus_N"]
+    while Na % 4 or (Nv + Na - 2 * c) % 8:
+        Na += 1
+    haut = _demi_ellipse(0.0, vm, wm, P["anus_haut"] - vm, False)
+    a0 = math.atan2(vm - c_a[1], wm)
+    a1 = math.atan2(vm - c_a[1], -wm) % (2 * math.pi)
+    n_haut = Na - c - 1
+    angs = a0 + (a1 - a0) * np.arange(1, n_haut + 1) / (n_haut + 1)
+    arc = rayon_vers(c_a, angs, haut)
+    h = c // 2
+    BA = np.vstack([milieu[h:], arc, milieu[:h]])
+    ang_a = np.unwrap(np.arctan2(BA[:, 1] - c_a[1], BA[:, 0] - c_a[0]))
+    ang_a = ang_a - 2 * math.pi * np.round((ang_a[0] + math.pi / 2) / (2 * math.pi))
+    return BV, k_J, BA, ang_a, Na
+
+
+def build_double(base, P):
+    """Vulve (en bas) et anus (en haut) sur une même face, deux canaux séparés.
+
+    Trois maillages en anneaux, fusionnés : région de la vulve (Nv), région de l'anus (Na),
+    corps (Nc = 4 k_J + Na - Nv). Les bords des régions et la topologie sont fixés par la
+    forme de base, donc les shape keys gardent la même topologie.
+    """
+    Nv = P["N"]
+    P = dict(P, replats=(((0.0, P["anus_centre_v"]), 0.8 * P["anus_R"], P["anus_R"] + 0.013),))
+    cle = tuple(sorted((k, v) for k, v in base.items() if not isinstance(v, (dict, list))))
+    BV, k_J, BA, ang_a, Na = _topologie_double(cle)
+    c = Nv - 2 * k_J
+    h = c // 2
+    A, B = P["A"], P["B"]
+
+    # ---- région de la vulve
+    rv = RingMesh(Nv)
+    ent_v = vulve(P, Nv, decalage=(0.0, P["vulve_v"] - 0.5 * (P["slit_vS"] + P["slit_vJ"])), base=base)
+    couronne_v = [ent_v["contour"] + s * (BV - ent_v["contour"]) for s in P["face_s_regions"]]
+    fond_v, ic_v, r_v = _region_entree(rv, P, ent_v, params_canal(P), couronne_v)
+    rv.cap(0, lambda R_: R_[:, :2], fond_v, Nv // 8, vulve=0.0, interieur=1.0)
+
+    # ---- région de l'anus
+    ra = RingMesh(Na)
+    ent_a = anus(P, Na, centre=(0.0, P["anus_centre_v"]), angles=ang_a)
+    couronne_a = [ent_a["contour"] + s * (BA - ent_a["contour"]) for s in P["face_s_regions"]]
+    fond_a, ic_a, r_a = _region_entree(ra, P, ent_a, params_canal(P, "anus_"), couronne_a)
+    ra.cap(0, lambda R_: R_[:, :2], fond_a, Na // 8, vulve=0.0, interieur=1.0)
+
+    # ---- corps : bord commun C, face jusqu'à l'arrondi, flancs, arrière
+    Cv = rv.rings[-1]
+    Ca = ra.rings[-1]
+    C = np.vstack([Cv[:k_J + 1], Ca[h + 1:Na - h], Cv[Nv - k_J:]])
+    Nc = len(C)
+    rc = RingMesh(Nc)
+    rc.add_ring(C, "face", vulve=0.0, interieur=0.0)
+    centre_c = np.array([0.0, 0.5 * (C[:, 1].min() + C[:, 1].max())])
+    rim_dense = ellipse(P["rho_rim"] * A, P["rho_rim"] * B, 4000)
+    rim = rayon_vers(centre_c, np.arctan2(C[:, 1] - centre_c[1], C[:, 0]), rim_dense)
+    for s in P["face_s"]:
+        uv = C[:, :2] + s * (rim - C[:, :2])
+        rc.add_ring(np.column_stack([uv, face_depth(P, uv)]), "face", vulve=0.0, interieur=0.0)
+    ring_bord = len(rc.rings) - 1
+    corps, cap_dos = anneaux_corps(P, rim / P["rho_rim"], transition=ellipse(A, B, Nc))
+    for pts, tag in corps:
+        rc.add_ring(pts, tag)
+    ring_dos = len(rc.rings) - 1
+    rc.cap(ring_dos, lambda R_: R_[:, :2], cap_dos, Nc // 8, vulve=0.0, interieur=0.0)
+
+    # ---- fusion : C = sommets des bords des régions ; milieu de l'anus = milieu de la vulve
+    parties = [rv.build(), ra.build(), rc.build()]
+    Rv, Ra = len(rv.rings), len(ra.rings)
+    bv = (Rv - 1) * Nv
+    ba = (Ra - 1) * Na
+    liens = []
+    for j in range(h + 1):                               # BA[j] = M[h + j] = BV[k_J + h - j]
+        liens.append((1, ba + j, 0, bv + k_J + h - j))
+    for j in range(Na - h, Na):                          # BA[j] = M[j - (Na - h)] = BV[k_J + c - m]
+        liens.append((1, ba + j, 0, bv + k_J + c - (j - (Na - h))))
+    for i in range(Nc):
+        if i <= k_J:
+            liens.append((2, i, 0, bv + i))
+        elif i < k_J + Na - c:
+            liens.append((2, i, 1, ba + h + (i - k_J)))
+        else:
+            liens.append((2, i, 0, bv + Nv - k_J + (i - (k_J + Na - c))))
+    verts, faces, attrs, idx, f_off = fusionner(parties, liens)
+    world = np.column_stack([verts[:, 0], verts[:, 2], verts[:, 1] + B])
+
+    # ---- coutures et zones (indices globaux)
+    coutures = []
+    for p, (N_, rings, ligne) in enumerate([
+            (Nv, (0, r_v["coupe"], r_v["ouverture"], r_v["bord"], r_v["couronne"]), (0, r_v["couronne"])),
+            (Na, (0, r_a["coupe"], r_a["ouverture"], r_a["bord"], r_a["couronne"]), (0, r_a["couronne"])),
+            (Nc, (ring_bord, ring_dos), (0, ring_dos))]):
+        coutures += [(int(idx[p][a]), int(idx[p][b])) for a, b in _boucles(N_, rings, ligne)]
+    coutures = sorted({tuple(sorted(e)) for e in coutures if e[0] != e[1]})
+
+    zones = {}
+
+    def ajouter(zone, p, faces_locales):
+        zones.setdefault(zone, []).extend(f_off[p] + f for f in faces_locales)
+
+    for p, (N_, r_, R_) in enumerate([(Nv, r_v, Rv), (Na, r_a, Ra)]):
+        suffixe = "" if p == 0 else "_anus"
+        ajouter("canal" + suffixe, p, range(0, r_["coupe"] * N_))
+        ajouter("entree" + suffixe, p, range(r_["coupe"] * N_, r_["ouverture"] * N_))
+        ajouter("levres" if p == 0 else "anus", p, range(r_["ouverture"] * N_, r_["bord"] * N_))
+        ajouter("face" if p == 0 else "face_anus", p, range(r_["bord"] * N_, (R_ - 1) * N_))
+        ajouter("canal" + suffixe, p, range((R_ - 1) * N_, len(parties[p][1])))
+    ajouter("face_fesses", 2, range(0, ring_bord * Nc))
+    ajouter("corps", 2, range(ring_bord * Nc, len(parties[2][1])))
+
+    infos = dict(axe_canal_z=float(ent_v["axe"][1] + B), axe_anus_z=float(ent_a["axe"][1] + B),
+                 profondeur_canal=ic_v["profondeur"], profondeur_anus=ic_a["profondeur"],
+                 n_anneaux=Rv + Ra + len(rc.rings), N=Nv, N_anus=Na, N_corps=Nc, tags=None,
+                 coutures=coutures, zones_faces=zones,
+                 echelles_uv={"levres": 2.0, "anus": 2.0, "face": 1.2, "face_anus": 1.2})
     return world, faces, attrs, infos

@@ -171,4 +171,5 @@ def main():
     shot("08_topologie_34.png", cam_34)
 
 
-main()
+if __name__ == "__main__":
+    main()

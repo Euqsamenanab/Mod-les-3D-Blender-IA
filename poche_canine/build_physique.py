@@ -322,4 +322,5 @@ def assembler(scene):
     print("vidéo :", scene.render.filepath)
 
 
-main()
+if __name__ == "__main__":
+    main()
