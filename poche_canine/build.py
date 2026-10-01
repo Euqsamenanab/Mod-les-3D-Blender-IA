@@ -1,0 +1,174 @@
+"""Construit le vagin de poche dans Blender, sauvegarde le .blend et rend les vues de validation.
+
+Usage : python poche_canine/build.py [--quick] [--no-render] [--only=01,04]
+"""
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+import bpy  # noqa: E402  (bpy doit être importé avant bmesh / mathutils)
+import numpy as np  # noqa: E402
+
+from lib import studio  # noqa: E402
+from lib.materials import latex_controls, latex_material, simple_material  # noqa: E402
+from poche_canine.sleeve import CANAL_VARIANTS, PARAMS, build  # noqa: E402
+
+OUT = os.path.join(ROOT, "output", "poche_canine")
+QUICK = "--quick" in sys.argv
+RENDER = "--no-render" not in sys.argv
+ONLY = next((a.split("=", 1)[1].split(",") for a in sys.argv if a.startswith("--only=")), None)
+
+
+def want(tag):
+    return ONLY is None or tag in ONLY
+
+LEVRES_GONFLEES = dict(
+    lip_h=0.98,
+    lip_profile=((0.0, 0.0), (0.0, 0.22), (0.025, 0.55), (0.09, 0.82), (0.19, 0.97), (0.33, 1.03),
+                 (0.58, 1.0), (0.86, 0.80), (1.08, 0.42), (1.0, 0.0)),
+)
+
+
+def make_sleeve():
+    verts, faces, attrs, infos = build()
+    rgba = np.column_stack([attrs["vulve"], attrs["interieur"], np.zeros(len(verts)), np.ones(len(verts))])
+    mat = latex_material("Latex_Poche")
+    ob = studio.mesh_object("Poche_Canine", verts, faces, [mat], attrs={"Masques": rgba})
+
+    ob.shape_key_add(name="Basis", from_mix=False)
+
+    def add_key(name, **overrides):
+        v, _, _, _ = build(**overrides)
+        k = ob.shape_key_add(name=name, from_mix=False)
+        k.data.foreach_set("co", v.astype(np.float32).ravel())
+        k.slider_min, k.slider_max = 0.0, 1.0
+        return k
+
+    add_key("Levres_Gonflees", **LEVRES_GONFLEES)
+    for var in CANAL_VARIANTS:
+        add_key(f"Canal_{var}", canal_variant=var)
+    ob.data.shape_keys.key_blocks["Levres_Gonflees"].slider_min = -0.5
+    ob.data.shape_keys.key_blocks["Levres_Gonflees"].slider_max = 1.5
+
+    studio.add_subsurf(ob, 1, 2)
+    ob["axe_canal_z"] = infos["axe_canal_z"]
+    ob["profondeur_canal"] = infos["profondeur_canal"]
+    return ob, mat
+
+
+def set_keys(ob, **values):
+    for kb in ob.data.shape_keys.key_blocks[1:]:
+        kb.value = values.get(kb.name, 0.0)
+
+
+def topology_overlay(ob):
+    """Copie du maillage de base (sans subdivision) + fil de fer, pour la vue topologie."""
+    col = bpy.data.collections.new("Apercu_Topologie")
+    bpy.context.scene.collection.children.link(col)
+    clay = simple_material("Apercu_Argile", (0.80, 0.80, 0.80), 0.6)
+    wire = simple_material("Apercu_Fil", (0.02, 0.02, 0.025), 0.5)
+    objs = []
+    for suffix, mat, wf in (("_argile", clay, False), ("_fil", wire, True)):
+        me = ob.data.copy()
+        me.materials.clear()
+        me.materials.append(mat)
+        dup = bpy.data.objects.new(ob.name + suffix, me)
+        col.objects.link(dup)
+        if wf:
+            w = dup.modifiers.new("Fil", "WIREFRAME")
+            w.thickness, w.use_even_offset, w.use_replace = 0.00018, True, True
+        objs.append(dup)
+    return col, objs
+
+
+def main():
+    os.makedirs(OUT, exist_ok=True)
+    scene = studio.reset_scene()
+    ob, mat = make_sleeve()
+    print(studio.mesh_report(ob))
+
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, "poche_canine.blend"), compress=True)
+    if not RENDER:
+        return
+
+    # ---------------------------------------------------------------- studio
+    studio.backdrop(scale=3.0)
+    res = (480, 360) if QUICK else (1200, 900)
+    studio.setup_render(scene, res, 16 if QUICK else 64)
+    zc = ob["axe_canal_z"]
+    key = studio.area_light("Cle", (-0.35, -0.45, 0.45), (0, 0.04, 0.06), 0.4, 14)
+    studio.area_light("Contre", (0.35, 0.30, 0.30), (0, 0.04, 0.06), 0.25, 8, (0.95, 0.97, 1.0))
+    studio.area_light("Debouche", (0.45, -0.35, 0.10), (0, 0.04, 0.06), 0.45, 3)
+    coupe = studio.area_light("Coupe", (0.45, 0.05, 0.40), (0, 0.10, zc), 0.5, 18)
+    coupe.hide_render = True
+
+    cam_face = studio.camera("Cam_Face", (0.0, -0.42, 0.075), (0, 0, 0.068), 85)
+    cam_34 = studio.camera("Cam_34", (-0.26, -0.34, 0.22), (0.0, 0.05, 0.055), 60)
+    cam_coupe = studio.camera("Cam_Coupe", (0.42, 0.105, zc + 0.06), (0, 0.105, zc), 50)
+    cam_profil = studio.camera("Cam_Profil", (-0.40, -0.02, 0.07), (0, -0.02, 0.065), 85)
+    cam_canal = studio.camera("Cam_Canal", (0.115, 0.075, zc + 0.03), (0, 0.075, zc), 50)
+
+    ctl = latex_controls(mat)
+    ctl.inputs["Transparence"].default_value = 0.0   # opaque pour lire la forme
+
+    def shot(name, cam):
+        if want(name[:2]):
+            studio.render(scene, os.path.join(OUT, name), cam)
+
+    out = lambda name: os.path.join(OUT, name)  # noqa: E731
+    set_keys(ob)
+    shot("01_face.png", cam_face)
+    shot("02_trois_quarts.png", cam_34)
+    set_keys(ob, Levres_Gonflees=1.0)
+    shot("03_trois_quarts_levres_gonflees.png", cam_34)
+    shot("03b_face_levres_gonflees.png", cam_face)
+    shot("09b_profil_levres_gonflees.png", cam_profil)
+    set_keys(ob)
+    shot("09_profil.png", cam_profil)
+
+    # ---------------------------------------------------------------- coupe
+    cutter = studio.mesh_object("Decoupe", [(0, -0.1, -0.1), (0.3, -0.1, -0.1), (0.3, 0.4, -0.1), (0, 0.4, -0.1),
+                                            (0, -0.1, 0.3), (0.3, -0.1, 0.3), (0.3, 0.4, 0.3), (0, 0.4, 0.3)],
+                                [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)],
+                                smooth=False)
+    cutter.hide_render = True
+    cutter.display_type = "WIRE"
+    boolean = ob.modifiers.new("Coupe", "BOOLEAN")
+    boolean.operation, boolean.object, boolean.solver = "DIFFERENCE", cutter, "EXACT"
+    boolean.material_mode = "TRANSFER"
+    cutter.data.materials.append(simple_material("Face_De_Coupe", (0.10, 0.11, 0.13), 0.7))
+    coupe.hide_render = False
+    key.hide_render = True
+    shot("04_coupe_canal_lisse.png", cam_coupe)
+
+    if want("05"):
+        tiles, labels = [], []
+        scene.render.resolution_x, scene.render.resolution_y = (320, 200) if QUICK else (800, 500)
+        for var in CANAL_VARIANTS:
+            set_keys(ob, **{f"Canal_{var}": 1.0})
+            tiles.append(studio.render(scene, out(f"_tile_{var}.png"), cam_canal))
+            labels.append(var.replace("_", " + "))
+        studio.contact_sheet(tiles, labels, out("05_variantes_canal.png"), cols=3)
+    set_keys(ob)
+    ob.modifiers.remove(boolean)
+    bpy.data.objects.remove(cutter)
+    coupe.hide_render = True
+    key.hide_render = False
+    scene.render.resolution_x, scene.render.resolution_y = res
+
+    # ---------------------------------------------------------------- latex semi-transparent
+    ctl.inputs["Transparence"].default_value = 0.9
+    scene.cycles.samples = 24 if QUICK else 160
+    shot("06_latex_transparent.png", cam_34)
+    scene.cycles.samples = 16 if QUICK else 64
+
+    # ---------------------------------------------------------------- topologie
+    col, topo = topology_overlay(ob)
+    ob.hide_render = True
+    shot("07_topologie_face.png", cam_face)
+    shot("08_topologie_34.png", cam_34)
+
+
+main()
