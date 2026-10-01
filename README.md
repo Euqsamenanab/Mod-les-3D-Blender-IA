@@ -285,6 +285,65 @@ Le proxy garde la forme de base : régénérer avec le script pour un proxy adap
 | `31` | Rigidités : latex souple, latex ferme, jouet souple, jouet rigide |
 | `physique_noue.gif` | Animation de la séquence |
 
+## UV et textures
+
+```bash
+~/.venv-blender/bin/python poche_canine/build_textures.py --res=4096   # textures 4K + rendus 40 à 43
+~/.venv-blender/bin/python poche_canine/build_textures.py --res=8192 --no-render
+```
+
+### UV du vagin de poche
+
+Les UV sont créés automatiquement par `make_sleeve` (`poche_canine/objet.py`), donc
+présents dans tous les fichiers.
+
+**Coutures**, posées sur la structure en anneaux, aux endroits peu visibles :
+- la ligne du dessous, de la fente jusqu'au fond, qui passe sous la pointe de la vulve ;
+- le bord de la fente ;
+- le contour de la vulve ;
+- le bord de la face avant ;
+- les deux fonds ;
+- une coupe dans le canal, après la chambre du nœud.
+
+**Îlots :** lèvres, face avant, flancs et dos, entrée du canal (vestibule et chambre),
+canal, fond du canal, fond de la poche. Dépliage *angle based*, densité égalisée puis
+empaquetage, avec 71 % d'occupation.
+
+**Densité :** la vulve a une résolution doublée (×2 en longueur) et la face avant est
+×1,2. En 4K, un pixel couvre environ 0,11 mm sur l'extérieur et 0,055 mm sur la vulve.
+
+### Textures (`output/poche_canine/textures/`, en 4K et 8K)
+
+| Carte | Contenu | Espace couleur | Unity URP Lit |
+| --- | --- | --- | --- |
+| `Poche_Canine_BaseColor_*` | Latex clair, teinte de la vulve, intérieur rose | sRGB | Base Map |
+| `Poche_Canine_Normal_*` | Petits plis autour de la pointe basse de la vulve, grain fin des lèvres (tangente, OpenGL) | Non-Color | Normal Map (type *Normal map*) |
+| `Poche_Canine_AO_*` | Occlusion ambiante (fente, contour, canal) | Non-Color | Occlusion Map |
+| `Poche_Canine_Masques_*` | R = vulve, G = intérieur (pour recolorer dans un shader) | Non-Color | — |
+
+- **Cuisson :** sur la poche subdivisée (niveau 2). Les couleurs sont celles du
+  matériau latex par défaut.
+- **Après une modification des couleurs du matériau :** relancer le script pour
+  recuire les cartes.
+- **Fichier `poche_canine_textures.blend` :** la poche avec ses UV et un 2ᵉ matériau,
+  `Latex_Poche_Textures`, qui utilise les cartes, comme dans Unity.
+
+### UV des jouets
+
+- **Principe :** les UV sont posés sur le gabarit, donc ils restent valides quels que
+  soient les réglages du générateur.
+- **Disposition :** la tige forme une bande (U = tour, V = longueur), coupée sur une
+  génératrice ; la base et la pointe ont chacune leur îlot.
+- **Limite :** sur les perles et les lobes, la bande s'étire en largeur. C'est sans
+  conséquence pour des couleurs unies, mais pas idéal pour des motifs.
+
+| Fichier | Contenu |
+| --- | --- |
+| `40` | Damier UV sur la poche |
+| `41` | Disposition UV colorée par zone |
+| `42` | Rendus avec les textures cuites, et gros plan des plis |
+| `43` | Aperçu des 4 cartes |
+
 ## À venir
 
-- UV propres, puis textures 4K/8K (masques de couleur, normal map des petits plis), export FBX pour Unity.
+- Export FBX pour Unity 6 URP (poche et jouets figés, shape keys en blend shapes, matériaux URP).

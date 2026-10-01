@@ -324,7 +324,9 @@ def build(P=None, **overrides):
         h = H * hn - P["fold_amp"] * fold_mask * math.sin(math.pi * t) * max(0.0, math.sin(2 * P["fold_count"] * math.pi * t))
         d = face_depth(P, uv) - h
         inner = 1.0 - float(smoothstep((t - 0.22) / 0.15))
-        rm.add_ring(np.column_stack([uv, d]), "levres", vulve=1.0, interieur=inner)
+        # attributs pour les textures : position radiale sur la lèvre, angle, zone de la pointe
+        rm.add_ring(np.column_stack([uv, d]), "levres", vulve=1.0, interieur=inner,
+                    levre_t=t, levre_k=np.arange(N) / N, pointe=fold_mask)
 
     # ---- face avant (du contour de la vulve au bord de l'arrondi)
     rim = ellipse(P["rho_rim"] * A, P["rho_rim"] * B, N)
@@ -367,5 +369,5 @@ def build(P=None, **overrides):
     verts, faces, attrs = rm.build()
     world = np.column_stack([verts[:, 0], verts[:, 2], verts[:, 1] + B])
     infos = dict(axe_canal_z=v_c + B, profondeur_canal=x_end + r_end, n_anneaux=len(rm.rings),
-                 tags=rm.tags)
+                 tags=rm.tags, N=N, profondeurs=[float(r[:, 2].mean()) for r in rm.rings])
     return world, faces, attrs, infos

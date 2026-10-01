@@ -317,11 +317,38 @@ def regler(ob, modifier="Generateur", **valeurs):
     ob.data.update()
 
 
+def uv_gabarit(me, verts, attrs, segments, anneaux):
+    """UV fixes du gabarit (valables pour tous les réglages GN) : la tige en bande
+    (U = angle, V = abscisse curviligne t), coupée sous le jouet ; base et pointe en
+    deux îlots carrés."""
+    S = segments
+    n_anneau = (anneaux - 1) * S
+    n_cap = (S // 4) ** 2
+    t = attrs["t"]
+    uv = np.zeros((len(me.loops), 2), np.float32)
+    for p in me.polygons:
+        idx = [me.loops[li].vertex_index for li in p.loop_indices]
+        if p.index < n_anneau:
+            ks = [(i % S if i < anneaux * S else 0) for i in idx]
+            boucle = max(ks) - min(ks) > 1                  # face qui traverse la couture (k = S-1 -> 0)
+            for li, i, k in zip(p.loop_indices, idx, ks):
+                kk = S if (boucle and k == 0) else k
+                uv[li] = (0.02 + 0.5 * kk / S, 0.01 + 0.98 * (t[i] - T_CAP) / (1 - 2 * T_CAP))
+        else:
+            v0 = 0.05 if p.index < n_anneau + n_cap else 0.55   # base en bas, pointe en haut
+            for li, i in zip(p.loop_indices, idx):
+                x, y = verts[i, 0], verts[i, 1]
+                uv[li] = (0.56 + 0.2 * (x + 1), v0 + 0.2 * (y + 1))
+    couche = me.uv_layers.new(name="UVMap")
+    couche.data.foreach_set("uv", uv.ravel())
+
+
 def creer_jouet(kind, material, location=(0, 0, 0), subdivision=(1, 2)):
     spec = JOUETS[kind]
     verts, faces, attrs = gabarit(spec.get("segments", SEGMENTS), spec.get("anneaux", ANNEAUX))
     ob = mesh_object(JOUETS[kind]["nom"], verts, faces, [material])
     me = ob.data
+    uv_gabarit(me, verts, attrs, spec.get("segments", SEGMENTS), spec.get("anneaux", ANNEAUX))
     for name in ("t", "theta"):
         a = me.attributes.new(name, "FLOAT", "POINT")
         a.data.foreach_set("value", attrs[name].astype(np.float32))
